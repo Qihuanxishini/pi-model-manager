@@ -125,7 +125,10 @@ function createModelDraftFromProvider(providerDraft: ProviderDraft): ModelDraft 
 		modelName: "",
 		// 新建模型默认开启视觉输入；不支持图片的模型可在编辑器里关闭。
 		inputKinds: ["text", "image"],
+		metadataSource: "models.dev",
 		reasoningMode: preset.defaultReasoning ? "enabled" : "disabled",
+		thinkingLevelMap: undefined,
+		cost: { ...ZERO_COST },
 		anthropicThinkingProtocol: providerDraft.api === "anthropic-messages" ? "adaptive" : undefined,
 		contextWindow: preset.contextWindow,
 		maxTokens: preset.maxTokens,
@@ -165,7 +168,10 @@ export function createModelDraftFromStoredModel(
 		modelId: model.id,
 		modelName: model.name ?? "",
 		inputKinds: [...(model.input ?? preset.inputKinds)],
+		metadataSource: "models.dev",
 		reasoningMode: reasoning ? "enabled" : "disabled",
+		thinkingLevelMap: cloneJson(model.thinkingLevelMap),
+		cost: cloneJson(model.cost) ?? { ...ZERO_COST },
 		anthropicThinkingProtocol: effectiveApi === "anthropic-messages"
 			? (usesAdaptiveThinking ? "adaptive" : "legacy")
 			: undefined,
@@ -364,7 +370,7 @@ export function buildModelFromDraft(
 	const reasoning = draft.reasoningMode === "enabled";
 	const compat: CompatSettings = cloneJson(existing?.compat) ?? {};
 	const effectiveApi = isApiKind(existing?.api) ? existing.api : draft.api;
-	const storedThinkingLevelMap = cloneJson(existing?.thinkingLevelMap);
+	const storedThinkingLevelMap = cloneJson(draft.thinkingLevelMap) ?? cloneJson(existing?.thinkingLevelMap);
 	const thinkingLevelMap = normalizeThinkingLevelMap(effectiveApi, reasoning, storedThinkingLevelMap);
 
 	const next: StoredModel = {
@@ -373,7 +379,7 @@ export function buildModelFromDraft(
 		input: [...draft.inputKinds],
 		contextWindow: draft.contextWindow,
 		maxTokens: draft.maxTokens,
-		cost: cloneJson(existing?.cost) ?? { ...ZERO_COST },
+		cost: cloneJson(draft.cost) ?? { ...ZERO_COST },
 	};
 	if (existing?.api) next.api = existing.api;
 	if (existing?.baseUrl) next.baseUrl = existing.baseUrl;

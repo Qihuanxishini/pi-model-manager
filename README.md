@@ -136,6 +136,8 @@ Ctrl+S 保存并启用模型；不切换当前会话模型
 - 提供自动推荐、禁用、Claude Code、Codex 和自定义请求头模式。
 - API key 支持字面值、`$ENV_VAR` / `${ENV_VAR}` 和 Pi 的 `!command` 引用。
 - 使用跨进程锁与可恢复双文件事务持久化配置，并在保存后重新注册受管理的 Provider。
+- 进入具体 Provider 后按 `B` 管理该 Provider 的余额配置，余额配置与 Provider ID 重命名、删除自动同步。
+- 模型保存时可选择 `models.dev`（默认）或 OpenRouter 同步上下文、最大输出、Thinking 等级与费用。
 
 ## 安装
 
@@ -165,6 +167,28 @@ pi update --extensions
 pi install npm:pi-model-manager
 ```
 
+### 从当前仓库安装
+
+如果你正在使用本仓库的本地修改，可直接从仓库目录安装：
+
+```bash
+cd /path/to/pi-model-manager
+npm install
+pi install . --approve
+```
+
+这会把本地仓库路径加入 Pi 的用户包配置。重新打开 Pi，或执行 `/reload` 后生效。
+
+查看、更新和卸载：
+
+```bash
+pi list
+pi update ../../path/to/pi-model-manager
+pi remove npm:pi-model-manager
+# 本地安装时按 pi list 显示的本地路径移除
+pi remove ../../path/to/pi-model-manager
+```
+
 ## 快速开始
 
 1. 启动 Pi TUI。
@@ -187,6 +211,8 @@ pi install npm:pi-model-manager
    | `Esc` | 返回或退出 |
 
    单字母快捷键不区分大小写；底部提示按终端宽度折行，窄终端下也不会丢失。
+
+   进入某个 Provider 后，按 `B` 编辑该 Provider 的余额协议、地址、凭据、换算比例和单位；余额不是顶层独立配置。
 
 4. 在编辑器中使用 `↑` / `↓` 选择字段，按 `Enter` 编辑；开关类字段可用 `←` / `→` 就地切换；按 `Ctrl+S` 保存。
 
@@ -218,6 +244,8 @@ Base URL 在填入时就会归一化为各协议 SDK 可直接使用的根地址
 - Anthropic Adaptive/Legacy Thinking 协议
 - OpenAI Responses Fast mode
 - Context window 与最大输出 token
+- 元数据源：`models.dev`（默认）、OpenRouter，或手工保留现有值
+- 保存时同步 context、max tokens、Thinking 等级和 cost
 
 ## 请求头模式
 
@@ -244,6 +272,8 @@ Base URL 在填入时就会归一化为各协议 SDK 可直接使用的根地址
 | --- | --- |
 | `~/.pi/agent/models.json` | Pi 原生接入与模型定义；模型配置的唯一权威来源 |
 | `~/.pi/agent/extensions/pi-model-manager/state.json` | 请求头选择、自定义请求头、代理开关和 Fast mode 等扩展私有元数据 |
+| `~/.pi/agent/balance-config.yaml` | Pi 核心消费的余额协议；通过 Provider 子菜单中的 `B` 编辑 |
+| `UPSTREAM-DIFFERENCES.md` | 本项目与上游 Pi 的功能和配置边界差异 |
 
 扩展只会为明确受管理的 Provider 生成请求头、代理路由和动态注册配置。所有权由 `state.json` 的受管理 ID 与 `models.json` Provider 节点中的 `piModelManager.managed` 标记共同确认，防止已删除的 Provider ID 在日后被同名原生配置复用时遭到插件接管。没有这些所有权信息的原生 Provider 保持未管理，其已有 Header 和未知原生字段不会因保存其它配置而被改写；Pi 内置 Provider 不在本扩展中提供编辑或删除入口。
 

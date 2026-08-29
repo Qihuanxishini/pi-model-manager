@@ -10,6 +10,7 @@ export type ApiKind = "openai-completions" | "openai-responses" | "anthropic-mes
 export type ModelInputKind = "text" | "image";
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ThinkingLevelMap = Partial<Record<ThinkingLevel, string | null>>;
+type ModelMetadataSource = "models.dev" | "openrouter" | "manual";
 export type ReasoningMode = "enabled" | "disabled";
 export type AnthropicThinkingProtocol = "adaptive" | "legacy";
 export type BuiltInClientHeaderProfileId = "claude-code" | "codex-cli";
@@ -131,7 +132,10 @@ export interface ModelDraft {
 	modelId: string;
 	modelName: string;
 	inputKinds: ModelInputKind[];
+	metadataSource: ModelMetadataSource;
 	reasoningMode: ReasoningMode;
+	thinkingLevelMap?: ThinkingLevelMap;
+	cost: TokenCost;
 	anthropicThinkingProtocol?: AnthropicThinkingProtocol;
 	contextWindow: number;
 	maxTokens: number;

@@ -13,6 +13,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { formatUnknownError } from "../common.ts";
 import { getUiLanguage, setUiLanguage, t, type UiLanguage } from "../i18n.ts";
 import { writeUiLanguage } from "../ui-language-settings.ts";
+import { synchronizeModelMetadata } from "../model-metadata.ts";
 import {
 	deleteModelConfiguration,
 	deleteProviderConfiguration,
@@ -51,6 +52,8 @@ import {
 	getProviderNameColumnWidth,
 } from "./ui-helpers.ts";
 import { runHeaderProfilesPanel } from "./header-profiles-panel.ts";
+import { runBalancePanel } from "./balance-panel.ts";
+import { deleteBalanceProvider, renameBalanceProvider } from "../balance-config.ts";
 
 interface DashboardRow {
 	providerId: string;
@@ -119,6 +122,21 @@ async function selectUiLanguage(ctx: ExtensionCommandContext): Promise<void> {
 
 // ========== save 流程 ==========
 
+async function synchronizeModelDraft(
+	ctx: ExtensionCommandContext,
+	draft: ReturnType<typeof createModelDraftForStoredProvider>,
+): Promise<boolean> {
+	if (draft.metadataSource === "manual") return true;
+	try {
+		ctx.ui.notify(t("正在从 {source} 同步模型元数据…", { source: draft.metadataSource }), "info");
+		await synchronizeModelMetadata(draft);
+		return true;
+	} catch (error) {
+		ctx.ui.notify(t("模型元数据同步失败：{error}", { error: formatUnknownError(error) }), "error");
+		return false;
+	}
+}
+
 async function saveProviderDraft(
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
@@ -137,6 +155,13 @@ async function saveProviderDraft(
 
 	try {
 		await saveProviderConfiguration(pi, ctx, state, draft, oldProviderId);
+		if (oldProviderId && oldProviderId !== draft.providerId) {
+			try {
+				await renameBalanceProvider(oldProviderId, draft.providerId);
+			} catch (error) {
+				ctx.ui.notify(t("余额配置同步失败：{error}", { error: formatUnknownError(error) }), "warning");
+			}
+		}
 		return true;
 	} catch (error) {
 		ctx.ui.notify(t("保存失败：{error}", { error: formatUnknownError(error) }), "error");
@@ -150,6 +175,7 @@ async function saveModelDraft(
 	draft: ReturnType<typeof createModelDraftForStoredProvider>,
 	replacedModelId: string | undefined,
 ): Promise<boolean> {
+	if (!(await synchronizeModelDraft(ctx, draft))) return false;
 	const state = await readState();
 	const errors = validateModelDraft(draft, state, replacedModelId);
 	if (errors.length > 0) {
@@ -171,6 +197,7 @@ async function saveNewProviderAndModelDraft(
 	providerDraft: ReturnType<typeof createProviderDraft>,
 	modelDraft: ReturnType<typeof createModelDraftForStoredProvider>,
 ): Promise<boolean> {
+	if (!(await synchronizeModelDraft(ctx, modelDraft))) return false;
 	const state = await readState();
 	const builtInIds = await getBuiltinProviderIds();
 	const providerErrors = validateProviderDraft(providerDraft, state, builtInIds, undefined);
@@ -203,6 +230,11 @@ async function deleteProvider(pi: ExtensionAPI, ctx: ExtensionCommandContext, pr
 	if (!ok) return false;
 	try {
 		await deleteProviderConfiguration(pi, ctx, providerId, provider);
+		try {
+			await deleteBalanceProvider(providerId);
+		} catch (error) {
+			ctx.ui.notify(t("余额配置同步失败：{error}", { error: formatUnknownError(error) }), "warning");
+		}
 		return true;
 	} catch (error) {
 		ctx.ui.notify(t("删除失败：{error}", { error: formatUnknownError(error) }), "error");
@@ -231,7 +263,7 @@ async function deleteModel(pi: ExtensionAPI, ctx: ExtensionCommandContext, provi
 
 // ========== 子菜单 ==========
 
-type ProviderShortcut = "add-model" | "edit-provider" | "delete-model";
+type ProviderShortcut = "add-model" | "edit-provider" | "balance" | "delete-model";
 
 async function editStoredModel(
 	pi: ExtensionAPI,
@@ -273,6 +305,7 @@ async function showProviderMenu(pi: ExtensionAPI, ctx: ExtensionCommandContext, 
 			[
 				{ input: "a", shortcut: "add-model" },
 				{ input: "e", shortcut: "edit-provider" },
+				{ input: "b", shortcut: "balance" },
 				{ input: "d", shortcut: "delete-model" },
 			],
 			{
@@ -299,6 +332,10 @@ async function showProviderMenu(pi: ExtensionAPI, ctx: ExtensionCommandContext, 
 		);
 		if (action.type === "cancel") return false;
 		if (action.type === "shortcut") {
+			if (action.shortcut === "balance") {
+				await runBalancePanel(pi, ctx, providerId);
+				continue;
+			}
 			if (action.shortcut === "add-model") {
 				const draft = createModelDraftForStoredProvider(providerId, currentProvider);
 				const outcome = await editModel(ctx, draft, t("添加模型到 {providerId}", { providerId }), state.requestHeaderProfiles, state.clientHeaderCaptures);

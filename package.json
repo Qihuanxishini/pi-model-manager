@@ -27,6 +27,9 @@
     "local-proxy-service.ts",
     "request-pipeline.ts",
     "model-mutations.ts",
+    "model-metadata.ts",
+    "balance-config.ts",
+    "tui/balance-panel.ts",
     "header-profile-mutations.ts",
     "rescue.ts",
     "atomic-write.ts",
@@ -76,6 +79,7 @@
     "http-proxy-agent": "^9.1.0",
     "https-proxy-agent": "^9.1.0",
     "minimatch": "^10.2.6",
-    "proper-lockfile": "^4.1.2"
+    "proper-lockfile": "^4.1.2",
+    "yaml": "^2.8.1"
   }
 }
