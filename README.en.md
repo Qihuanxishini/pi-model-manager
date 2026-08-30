@@ -4,11 +4,13 @@ English · [简体中文](./README.md)
 
 [![Pi](https://img.shields.io/badge/Pi-%3E%3D0.84.2-6f42c1)](https://github.com/earendil-works/pi)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.2-2f81f7.svg)](https://github.com/Qihuanxishini/pi-model-manager)
+[![Version](https://img.shields.io/badge/version-0.3.2-2f81f7.svg)](https://github.com/NietzscheLi/pi-model-manager)
 
 A TUI model and provider manager for [Pi](https://github.com/earendil-works/pi). It keeps Pi's native `models.json` as the single source of truth for model configuration while adding provider/model editing, client-header identities, proxy routing, and protocol compatibility controls.
 
 > The current stable version is `0.3.2` and requires Pi `>=0.84.2`.
+>
+> This project is a maintained fork of [Qihuanxishini/pi-model-manager](https://github.com/Qihuanxishini/pi-model-manager). It is distributed under the [AGPL-3.0 license](./LICENSE). When redistributing a modified version you must retain the copyright and license notices, provide the corresponding source, and clearly mark your changes.
 
 ## Interface preview
 
@@ -51,7 +53,8 @@ endpoint  https://api.openai.com/v1
 ❯ gpt-5.6-sol     默认      文本,视觉   开           1.1M
   gpt-5.6-terra   默认      文本,视觉   开           1.1M
 
-↑↓ 选择   Enter 编辑模型   A 添加模型   E 编辑接入   D 删除模型   Esc 返回   / 搜索
+↑↓ 选择   Enter 编辑模型   A 添加模型   E 编辑接入   B 余额配置   D 删除模型
+Esc 返回   / 搜索
 ────────────────────────────────────────────────────────────────────────────────────────
 ```
 
@@ -142,13 +145,13 @@ Ctrl+S 保存并启用模型；不切换当前会话模型
 ### Install from GitHub (recommended for now)
 
 ```bash
-pi install git:github.com/Qihuanxishini/pi-model-manager
+pi install git:github.com/NietzscheLi/pi-model-manager
 ```
 
 Try it for the current run without adding it to Pi's package settings:
 
 ```bash
-pi -e git:github.com/Qihuanxishini/pi-model-manager
+pi -e git:github.com/NietzscheLi/pi-model-manager
 ```
 
 Update Git-installed extensions with:
@@ -277,7 +280,7 @@ The TUI copy defaults to Simplified Chinese; press `L` on the dashboard to switc
 ## Local development
 
 ```bash
-git clone https://github.com/Qihuanxishini/pi-model-manager.git
+git clone https://github.com/NietzscheLi/pi-model-manager.git
 cd pi-model-manager
 npm install
 pi -e .
@@ -293,7 +296,7 @@ npm pack --dry-run
 
 ## Reporting issues
 
-Open a reproducible report in [GitHub Issues](https://github.com/Qihuanxishini/pi-model-manager/issues). Remove API keys, authentication headers, proxy credentials, and private endpoints before sharing configuration or logs.
+Open a reproducible report in [GitHub Issues](https://github.com/NietzscheLi/pi-model-manager/issues). Remove API keys, authentication headers, proxy credentials, and private endpoints before sharing configuration or logs.
 
 ## Friendly links
 

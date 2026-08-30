@@ -57,14 +57,15 @@
     "anthropic"
   ],
   "author": "Qihuanxishini",
+  "contributors": ["NietzscheLi"],
   "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Qihuanxishini/pi-model-manager.git"
+    "url": "git+https://github.com/NietzscheLi/pi-model-manager.git"
   },
-  "homepage": "https://github.com/Qihuanxishini/pi-model-manager#readme",
+  "homepage": "https://github.com/NietzscheLi/pi-model-manager#readme",
   "bugs": {
-    "url": "https://github.com/Qihuanxishini/pi-model-manager/issues"
+    "url": "https://github.com/NietzscheLi/pi-model-manager/issues"
   },
   "pi": {
     "extensions": [

@@ -102,6 +102,7 @@ const ENGLISH_MESSAGES = {
 	"正在从 {source} 同步模型元数据…": "Syncing model metadata from {source}…",
 	"模型元数据同步失败：{error}": "Model metadata sync failed: {error}",
 	"余额配置同步失败：{error}": "Balance configuration sync failed: {error}",
+	"余额配置": "Balance",
 	"余额配置 · {providerId}": "Balance · {providerId}",
 	"余额配置已保存": "Balance configuration saved",
 	"余额配置保存失败：{error}": "Failed to save balance configuration: {error}",

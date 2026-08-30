@@ -4,11 +4,13 @@
 
 [![Pi](https://img.shields.io/badge/Pi-%3E%3D0.84.2-6f42c1)](https://github.com/earendil-works/pi)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.2-2f81f7.svg)](https://github.com/Qihuanxishini/pi-model-manager)
+[![Version](https://img.shields.io/badge/version-0.3.2-2f81f7.svg)](https://github.com/NietzscheLi/pi-model-manager)
 
 一个面向 [Pi](https://github.com/earendil-works/pi) 的 TUI 模型与接入管理扩展。它以 Pi 原生 `models.json` 为模型配置的唯一权威来源，并提供接入/模型编辑、请求头身份、代理路由和协议兼容配置。
 
 > 当前稳定版为 `0.3.2`，要求 Pi `>=0.84.2`。
+>
+> 本项目基于 [Qihuanxishini/pi-model-manager](https://github.com/Qihuanxishini/pi-model-manager) 的源码维护，是其衍生/修改版本。请遵守原项目及本项目的 [AGPL-3.0 许可](./LICENSE)，分发修改版时须保留版权与许可声明、公开对应源码，并明确标注改动。
 
 ## 界面预览
 
@@ -51,7 +53,8 @@ endpoint  https://api.openai.com/v1
 ❯ gpt-5.6-sol     默认      文本,视觉   开           1.1M
   gpt-5.6-terra   默认      文本,视觉   开           1.1M
 
-↑↓ 选择   Enter 编辑模型   A 添加模型   E 编辑接入   D 删除模型   Esc 返回   / 搜索
+↑↓ 选择   Enter 编辑模型   A 添加模型   E 编辑接入   B 余额配置   D 删除模型
+Esc 返回   / 搜索
 ────────────────────────────────────────────────────────────────────────────────────────
 ```
 
@@ -144,13 +147,13 @@ Ctrl+S 保存并启用模型；不切换当前会话模型
 ### 从 GitHub 安装（当前推荐）
 
 ```bash
-pi install git:github.com/Qihuanxishini/pi-model-manager
+pi install git:github.com/NietzscheLi/pi-model-manager
 ```
 
 也可以先临时试用，不写入 Pi 的包配置：
 
 ```bash
-pi -e git:github.com/Qihuanxishini/pi-model-manager
+pi -e git:github.com/NietzscheLi/pi-model-manager
 ```
 
 更新 Git 安装的扩展：
@@ -311,7 +314,7 @@ ${ANTHROPIC_API_KEY}
 ## 本地开发
 
 ```bash
-git clone https://github.com/Qihuanxishini/pi-model-manager.git
+git clone https://github.com/NietzscheLi/pi-model-manager.git
 cd pi-model-manager
 npm install
 pi -e .
@@ -327,7 +330,7 @@ npm pack --dry-run
 
 ## 问题反馈
 
-请通过 [GitHub Issues](https://github.com/Qihuanxishini/pi-model-manager/issues) 提交可复现的问题。报告配置问题时，请删除 API key、认证头、代理凭据和私有 endpoint。
+请通过 [GitHub Issues](https://github.com/NietzscheLi/pi-model-manager/issues) 提交可复现的问题。报告配置问题时，请删除 API key、认证头、代理凭据和私有 endpoint。
 
 ## 友情链接
 
