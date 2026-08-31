@@ -1,19 +1,18 @@
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { join } from "node:path";
+import {
+	BALANCE_PROFILE_IDS,
+	createDefaultBalanceConfig,
+	getBalanceConfigPath,
+	type BalanceProfileId as PiBalanceProfileId,
+} from "@earendil-works/pi-coding-agent";
 import { parse, parseDocument, stringify } from "yaml";
 import { atomicWriteText } from "./atomic-write.ts";
 import { isObjectRecord } from "./common.ts";
 import { withConfigurationLock } from "./configuration-lock.ts";
 import { readStableTextFileSnapshot } from "./file-snapshot.ts";
 
-export const BALANCE_CONFIG_PATH = join(getAgentDir(), "balance-config.yaml");
+export const BALANCE_CONFIG_PATH = getBalanceConfigPath();
 
-export type BalanceProfileId =
-	| "newapi"
-	| "sub2api"
-	| "deepseek-official"
-	| "openrouter"
-	| "custom";
+export type BalanceProfileId = PiBalanceProfileId | "custom";
 
 export interface BalanceProviderDraft {
 	providerId: string;
@@ -35,82 +34,6 @@ interface BalanceConfigSnapshot {
 	contentHash: string;
 	value: JsonObject;
 }
-
-const DEFAULT_BALANCE_CONFIG = {
-	refreshIntervalMinutes: 5,
-	profiles: {
-		newapi: {
-			request: {
-				url: "{{baseUrl}}/api/user/self",
-				method: "GET",
-				headers: {
-					Accept: "application/json",
-					Authorization: "Bearer {{accessToken}}",
-					"New-Api-User": "{{userId}}",
-				},
-				timeoutSeconds: 10,
-			},
-			extractor: {
-				remainingPath: "data.quota",
-				usedPath: "data.used_quota",
-				totalPath: null,
-				validity: { allTruthy: ["success", "data"] },
-				errorPath: "message",
-				errorFallback: "Balance query failed",
-			},
-		},
-		sub2api: {
-			request: {
-				url: "{{baseUrl}}/v1/usage",
-				method: "GET",
-				headers: { Accept: "application/json", Authorization: "Bearer {{apiKey}}" },
-				timeoutSeconds: 10,
-			},
-			extractor: {
-				remainingPath: "remaining",
-				usedPath: "usage.total.actual_cost",
-				totalPath: null,
-				validity: { firstDefined: ["is_active", "isValid"], fallback: true },
-				errorFallback: "Balance query failed",
-			},
-		},
-		"deepseek-official": {
-			request: {
-				baseUrl: "https://api.deepseek.com",
-				url: "{{baseUrl}}/user/balance",
-				method: "GET",
-				headers: { Accept: "application/json", Authorization: "Bearer {{apiKey}}" },
-				timeoutSeconds: 10,
-			},
-			extractor: {
-				remainingPath: "balance_infos.0.total_balance",
-				usedPath: null,
-				totalPath: "balance_infos.0.total_balance",
-				unitPath: "balance_infos.0.currency",
-				validity: { path: "is_available", fallback: true },
-				errorFallback: "Insufficient balance",
-			},
-		},
-		openrouter: {
-			request: {
-				baseUrl: "https://openrouter.ai",
-				url: "{{baseUrl}}/api/v1/credits",
-				method: "GET",
-				headers: { Accept: "application/json", Authorization: "Bearer {{apiKey}}" },
-				timeoutSeconds: 10,
-			},
-			extractor: {
-				remainingPath: null,
-				usedPath: "data.total_usage",
-				totalPath: "data.total_credits",
-				validity: { path: "data", fallback: false },
-				errorFallback: "Balance query failed",
-				unit: "$",
-			},
-		},
-	},
-	providers: {},
-} satisfies JsonObject;
 
 function objectValue(value: unknown): JsonObject | undefined {
 	return isObjectRecord(value) ? value : undefined;
@@ -136,7 +59,7 @@ async function readBalanceConfigSnapshot(): Promise<BalanceConfigSnapshot> {
 		contentHash: snapshot.contentHash,
 		value:
 			snapshot.source === undefined
-				? structuredClone(DEFAULT_BALANCE_CONFIG)
+				? createDefaultBalanceConfig()
 				: parseBalanceConfig(snapshot.source),
 	};
 }
@@ -146,19 +69,12 @@ function profileIdForProvider(
 	provider: JsonObject,
 ): BalanceProfileId {
 	if (typeof provider.profile === "string") {
-		return ["newapi", "sub2api", "deepseek-official", "openrouter"].includes(
-			provider.profile,
-		)
-			? (provider.profile as BalanceProfileId)
+		return BALANCE_PROFILE_IDS.includes(provider.profile as PiBalanceProfileId)
+			? (provider.profile as PiBalanceProfileId)
 			: "custom";
 	}
 	const profiles = objectValue(value.profiles) ?? {};
-	for (const profileId of [
-		"newapi",
-		"sub2api",
-		"deepseek-official",
-		"openrouter",
-	] as const) {
+	for (const profileId of BALANCE_PROFILE_IDS) {
 		if (provider.profile === profiles[profileId]) return profileId;
 	}
 	return "custom";
