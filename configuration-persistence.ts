@@ -20,6 +20,7 @@ import {
 	renameProviderInDoc,
 	type ModelsJsonDocument,
 } from "./models-json-manager.ts";
+import { notifyModelsChanged, type ModelsChangeEvent } from "./models-change-events.ts";
 import {
 	buildModelsDocumentWithSynchronizedModel,
 	buildModelsDocumentWithoutModel,
@@ -199,6 +200,7 @@ type ModelsDocumentMutation = (
 async function persistConfigurationInsideLock(
 	prepare: PrepareConfigurationChange,
 	mutateModels: ModelsDocumentMutation,
+	explicitEvents: readonly ModelsChangeEvent[] = [],
 ): Promise<StateDocument> {
 	await recoverPendingConfigurationTransactionInsideLock();
 	const [modelsSnapshot, metadataSnapshot] = await Promise.all([
@@ -221,6 +223,10 @@ async function persistConfigurationInsideLock(
 		? modelsSnapshot.source
 		: stringifyJson(nextModels);
 	await writeConfigurationTransaction(modelsSnapshot, metadataSnapshot, modelsTarget, change.document);
+	notifyModelsChanged([
+		...change.removedProviderIds.map((providerId): ModelsChangeEvent => ({ type: "provider-delete", providerId })),
+		...explicitEvents,
+	]);
 	return change.document;
 }
 
@@ -272,6 +278,7 @@ export async function persistProviderRenameConfiguration(
 			change.removedProviderIds,
 			change.changedProviderIds,
 		),
+		[{ type: "provider-rename", oldId: oldProviderId, newId: newProviderId }],
 	));
 }
 

@@ -35,6 +35,7 @@
     "config-value-reference.ts",
     "configuration-persistence.ts",
     "configuration-lock.ts",
+    "models-change-events.ts",
     "file-snapshot.ts",
     "sensitive-redaction.ts",
     "compat-settings.ts",

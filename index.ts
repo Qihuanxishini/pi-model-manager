@@ -13,6 +13,7 @@ import { formatUnknownError } from "./common.ts";
 import { DEFAULT_UI_LANGUAGE, joinLocalizedList, setUiLanguage, t } from "./i18n.ts";
 import { readUiLanguage } from "./ui-language-settings.ts";
 import { persistManagedConfiguration, recoverPendingConfigurationTransaction } from "./configuration-persistence.ts";
+import { MODELS_CHANGED_EVENT, setModelsChangeNotifier } from "./models-change-events.ts";
 import { resetClaudeCodeMetadataSession } from "./claude-code-compat.ts";
 import { findProvidersNeedingBaseUrlNormalization, normalizeProviderBaseUrlsInDocument } from "./state-document.ts";
 import { closeLocalProxyServer } from "./local-proxy-service.ts";
@@ -28,6 +29,8 @@ interface StartupSummary {
 export default async function modelManagerExtension(pi: ExtensionAPI): Promise<void> {
 	const summary: StartupSummary = { startupErrors: [] };
 	setUiLanguage(DEFAULT_UI_LANGUAGE);
+	// 保存成功后广播无 secret 的 models.json 变更事件；消费者（如余额对账）自行订阅。
+	setModelsChangeNotifier((payload) => pi.events.emit(MODELS_CHANGED_EVENT, payload));
 	try {
 		setUiLanguage(await readUiLanguage());
 	} catch (error) {
