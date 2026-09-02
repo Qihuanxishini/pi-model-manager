@@ -52,8 +52,6 @@ import {
 	getProviderNameColumnWidth,
 } from "./ui-helpers.ts";
 import { runHeaderProfilesPanel } from "./header-profiles-panel.ts";
-import { runBalancePanel } from "./balance-panel.ts";
-import { deleteBalanceProvider, renameBalanceProvider } from "../balance-config.ts";
 
 interface DashboardRow {
 	providerId: string;
@@ -155,13 +153,6 @@ async function saveProviderDraft(
 
 	try {
 		await saveProviderConfiguration(pi, ctx, state, draft, oldProviderId);
-		if (oldProviderId && oldProviderId !== draft.providerId) {
-			try {
-				await renameBalanceProvider(oldProviderId, draft.providerId);
-			} catch (error) {
-				ctx.ui.notify(t("余额配置同步失败：{error}", { error: formatUnknownError(error) }), "warning");
-			}
-		}
 		return true;
 	} catch (error) {
 		ctx.ui.notify(t("保存失败：{error}", { error: formatUnknownError(error) }), "error");
@@ -230,11 +221,6 @@ async function deleteProvider(pi: ExtensionAPI, ctx: ExtensionCommandContext, pr
 	if (!ok) return false;
 	try {
 		await deleteProviderConfiguration(pi, ctx, providerId, provider);
-		try {
-			await deleteBalanceProvider(providerId);
-		} catch (error) {
-			ctx.ui.notify(t("余额配置同步失败：{error}", { error: formatUnknownError(error) }), "warning");
-		}
 		return true;
 	} catch (error) {
 		ctx.ui.notify(t("删除失败：{error}", { error: formatUnknownError(error) }), "error");
@@ -263,7 +249,7 @@ async function deleteModel(pi: ExtensionAPI, ctx: ExtensionCommandContext, provi
 
 // ========== 子菜单 ==========
 
-type ProviderShortcut = "add-model" | "edit-provider" | "balance" | "delete-model";
+type ProviderShortcut = "add-model" | "edit-provider" | "delete-model";
 
 async function editStoredModel(
 	pi: ExtensionAPI,
@@ -305,7 +291,6 @@ async function showProviderMenu(pi: ExtensionAPI, ctx: ExtensionCommandContext, 
 			[
 				{ input: "a", shortcut: "add-model" },
 				{ input: "e", shortcut: "edit-provider" },
-				{ input: "b", shortcut: "balance" },
 				{ input: "d", shortcut: "delete-model" },
 			],
 			{
@@ -324,7 +309,6 @@ async function showProviderMenu(pi: ExtensionAPI, ctx: ExtensionCommandContext, 
 					{ key: "Enter", label: t("编辑模型") },
 					{ key: "A", label: t("添加模型") },
 					{ key: "E", label: t("编辑接入") },
-					{ key: "B", label: t("余额配置") },
 					{ key: "D", label: t("删除模型") },
 					{ key: "Esc", label: t("返回") },
 				],
@@ -333,10 +317,6 @@ async function showProviderMenu(pi: ExtensionAPI, ctx: ExtensionCommandContext, 
 		);
 		if (action.type === "cancel") return false;
 		if (action.type === "shortcut") {
-			if (action.shortcut === "balance") {
-				await runBalancePanel(pi, ctx, providerId);
-				continue;
-			}
 			if (action.shortcut === "add-model") {
 				const draft = createModelDraftForStoredProvider(providerId, currentProvider);
 				const outcome = await editModel(ctx, draft, t("添加模型到 {providerId}", { providerId }), state.requestHeaderProfiles, state.clientHeaderCaptures);

@@ -16,7 +16,7 @@
 | 请求头身份 | 使用 Pi 原生 Provider 行为 | 增加 Recommended、Disabled、Claude Code、Codex 和可复用 Custom profile |
 | Provider 代理 | 使用 Pi 原生配置 | 可在 `/model-manager` 为每个 Provider 配置 HTTP(S) 代理 |
 | 配置保存 | 由配置文件自身负责 | 使用跨进程锁、内容签名和可恢复事务，避免并发保存覆盖配置 |
-| 余额配置入口 | Pi 核心从 `~/.pi/agent/balance-config.yaml` 读取 | 在 `/model-manager` 进入具体 Provider 后按 `B` 编辑该 Provider 的余额配置 |
+| 余额状态 | 由独立扩展提供（上游核心不负责本项目的余额 UI） | 不处理余额配置、请求、缓存或 status；由 `pi-provider-status` 负责 |
 | 界面语言 | 使用 Pi 默认界面语言 | 扩展界面默认简体中文，可按 `L` 切换 English |
 
 ## 配置文件边界
@@ -25,10 +25,10 @@
 
 - Pi 原生模型配置：`~/.pi/agent/models.json`
 - 扩展私有状态：`~/.pi/agent/extensions/pi-model-manager/state.json`
-- 余额配置：`~/.pi/agent/balance-config.yaml`
+- 余额配置：`~/.pi/agent/balance-config.yaml`（由 `pi-provider-status` 唯一拥有）
 - 配置事务文件：`~/.pi/agent/extensions/pi-model-manager/config-transaction.json`
 
-`balance-config.yaml` 仍由 Pi 核心的 `ProviderBalanceService` 消费；本扩展只提供编辑和同步入口。余额配置属于 Provider，因此必须从 Provider 子菜单进入，不在 `/model-manager` 顶层单独选择。
+`balance-config.yaml` 不由本扩展读取或写入；余额请求、缓存、status 和配置 TUI 由独立的 `pi-provider-status` 扩展负责。两者只通过稳定 Provider ID 关联。
 
 ## 模型元数据同步规则
 
@@ -45,16 +45,18 @@
 
 - `models.json` 仍是模型配置的唯一权威来源；扩展不会另建一套模型运行时数据库。
 - 未被扩展明确接管的原生 Provider 不会被自动注册、改写或删除。
-- Provider 改名和删除时，扩展会同步迁移或删除 `balance-config.yaml` 中对应的 Provider key。
-- 余额请求继续使用 Pi 核心已经解析的 Provider 认证信息；本项目不复制余额请求、缓存或 footer 实现。
+- Provider 改名和删除时，本扩展只修改 `models.json`；余额配置由 `pi-provider-status` 的对账流程处理。
+- 余额请求、缓存、footer 和 status 不属于本扩展。
 - 扩展要求 Pi `>=0.84.2`，并依赖 `@earendil-works/pi-tui >=0.75.0`。
 
 ## 上游同步原则
 
 同步上游 Pi 时：
 
-1. 先确认上游 API、配置 schema 和 ProviderBalanceService 没有不兼容变化。
-2. 保留本项目的 TUI、模型元数据同步、balance 配置编辑和配置事务代码。
+1. 先确认上游 API、配置 schema 和模型注册 API 没有不兼容变化。
+
+2. 保留本项目的 TUI、模型元数据同步和配置事务代码；余额功能在 `pi-provider-status` 中维护。
+
 3. 不要把真实的 `models.json`、`state.json`、`balance-config.yaml`、API key 或请求抓包数据加入 Git。
 4. 运行完整测试：
 

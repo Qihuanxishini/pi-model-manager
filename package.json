@@ -28,8 +28,6 @@
     "request-pipeline.ts",
     "model-mutations.ts",
     "model-metadata.ts",
-    "balance-config.ts",
-    "tui/balance-panel.ts",
     "header-profile-mutations.ts",
     "rescue.ts",
     "atomic-write.ts",
