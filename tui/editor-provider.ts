@@ -9,8 +9,8 @@ import { t } from "../i18n.ts";
 import { switchProviderDraftApiPreset } from "../presets/providers.ts";
 import { redactUrlForDisplay } from "../sensitive-redaction.ts";
 import { resolveRuntimeBaseUrl } from "../runtime-base-url.ts";
-import { DEFAULT_PROVIDER_HTTP_PROXY_URL } from "../types.ts";
-import { showOptionPicker, showPersistentFormMenu, padLabel, type MenuCursor } from "./persistent-menu.ts";
+import { DEFAULT_PROVIDER_HTTP_PROXY_URL, type OpenAIChatCompatibilityMode } from "../types.ts";
+import { showOptionPicker, showPersistentFormMenu, padLabel, type HorizontalDirection, type MenuCursor } from "./persistent-menu.ts";
 import {
 	describeProfile,
 	formatApiShort,
@@ -28,6 +28,31 @@ interface FieldRow {
 	adjustable?: boolean;
 }
 
+const OPENAI_CHAT_COMPATIBILITY_MODE_ORDER: readonly OpenAIChatCompatibilityMode[] = ["standard", "compatible"];
+
+function getOpenAIChatCompatibilityMode(draft: ProviderDraft): OpenAIChatCompatibilityMode {
+	return draft.openAIChatCompatibilityMode ?? "standard";
+}
+
+function describeOpenAIChatCompatibilityMode(mode: OpenAIChatCompatibilityMode): string {
+	if (mode === "compatible") return t("兼容 · system");
+	return t("标准 · Pi 默认");
+}
+
+function getOpenAIChatCompatibilityModeHint(mode: OpenAIChatCompatibilityMode): string {
+	if (mode === "compatible") return t("兼容模式：系统提示词强制使用 system role，适合忽略 developer 的中转。");
+	return t("标准模式：保持 Pi 默认兼容判断。");
+}
+
+function cycleOpenAIChatCompatibilityMode(
+	mode: OpenAIChatCompatibilityMode,
+	direction: HorizontalDirection,
+): OpenAIChatCompatibilityMode {
+	const index = OPENAI_CHAT_COMPATIBILITY_MODE_ORDER.indexOf(mode);
+	const offset = direction === "right" ? 1 : -1;
+	return OPENAI_CHAT_COMPATIBILITY_MODE_ORDER[(index + offset + OPENAI_CHAT_COMPATIBILITY_MODE_ORDER.length) % OPENAI_CHAT_COMPATIBILITY_MODE_ORDER.length]!;
+}
+
 function buildRows(
 	draft: ProviderDraft,
 	requestHeaderProfiles: Record<string, StoredRequestHeaderProfile>,
@@ -38,23 +63,38 @@ function buildRows(
 	const profileDisplay = inlineCustomProfile
 		? t("内联自定义请求头（{count}项）", { count: Object.keys(draft.customClientHeaders).length })
 		: describeProfile(draft.clientHeaderProfile, draft.api, draft.requestHeaderProfileId, requestHeaderProfiles);
-	return [
+	const rows: FieldRow[] = [
 		{ id: "api", label: t("API 协议"), value: draft.api },
 		{ id: "providerId", label: t("接入 ID（必填）"), value: draft.providerId || t("<必填>") },
 		{ id: "providerName", label: t("名称"), value: draft.providerName || t("<空>") },
 		{ id: "baseUrl", label: "Base URL", value: draft.baseUrl },
+	];
+	if (draft.api === "openai-completions") {
+		rows.push({
+			id: "openAIChatCompatibilityMode",
+			label: t("协议兼容"),
+			value: describeOpenAIChatCompatibilityMode(getOpenAIChatCompatibilityMode(draft)),
+			adjustable: true,
+		});
+	}
+	rows.push(
 		{ id: "httpProxyEnabled", label: t("本机代理"), value: draft.httpProxyEnabled ? t("开启") : t("关闭"), adjustable: true },
 		{ id: "httpProxyUrl", label: t("代理地址"), value: draft.httpProxyEnabled ? redactUrlForDisplay(draft.httpProxyUrl || DEFAULT_PROVIDER_HTTP_PROXY_URL) : t("关闭时不使用") },
 		{ id: "apiKey", label: "API key", value: maskSecret(draft.apiKey) },
 		{ id: "authHeader", label: t("认证头"), value: draft.authHeader ? "Bearer" : t("默认") },
 		{ id: "clientHeaderProfile", label: t("请求头"), value: profileDisplay },
-	];
+	);
+	return rows;
 }
 
 
 
-// 开关字段在两个方向上都是取反，因此不看 direction；返回是否真的切换了字段。
-function applyHorizontalToggle(draft: ProviderDraft, fieldId: string): boolean {
+// 二值开关的两个方向都取反。
+function applyHorizontalToggle(draft: ProviderDraft, fieldId: string, direction: HorizontalDirection): boolean {
+	if (fieldId === "openAIChatCompatibilityMode") {
+		draft.openAIChatCompatibilityMode = cycleOpenAIChatCompatibilityMode(getOpenAIChatCompatibilityMode(draft), direction);
+		return true;
+	}
 	if (fieldId !== "httpProxyEnabled") return false;
 	draft.httpProxyEnabled = !draft.httpProxyEnabled;
 	if (draft.httpProxyEnabled && !draft.httpProxyUrl.trim()) draft.httpProxyUrl = DEFAULT_PROVIDER_HTTP_PROXY_URL;
@@ -98,6 +138,19 @@ async function editField(
 	if (fieldId === "api") {
 		const choice = await showOptionPicker(ctx, t("选择 API 协议"), getApiChoices(), draft.api);
 		if (choice) switchProviderDraftApiPreset(draft, choice.id);
+		return;
+	}
+	if (fieldId === "openAIChatCompatibilityMode") {
+		const choice = await showOptionPicker(
+			ctx,
+			t("选择协议兼容"),
+			[
+				{ id: "standard", label: t("标准 — 保持 Pi 默认兼容判断") },
+				{ id: "compatible", label: t("兼容 — 强制 system role，适合忽略 developer 的中转") },
+			],
+			getOpenAIChatCompatibilityMode(draft),
+		);
+		if (choice) draft.openAIChatCompatibilityMode = choice.id as OpenAIChatCompatibilityMode;
 		return;
 	}
 	if (fieldId === "authHeader") {
@@ -189,6 +242,17 @@ export async function editProvider(
 		}));
 		const rows = buildRows(draft, requestHeaderProfiles);
 		const menuRows = toMenuRows(rows);
+		const getSummaryLines = (): string[] => {
+			const summaryLines = [
+				`API ${formatApiShort(draft.api)} · ${t("请求头")} ${describeProfile(draft.clientHeaderProfile, draft.api, draft.requestHeaderProfileId, requestHeaderProfiles)}`,
+				t("接入 ID 必填，且不能与已有或 pi 内置接入重复"),
+				t("Ctrl+S 保存并同步 models.json；不切换当前会话模型"),
+			];
+			if (draft.api === "openai-completions") {
+				summaryLines.push(getOpenAIChatCompatibilityModeHint(getOpenAIChatCompatibilityMode(draft)));
+			}
+			return summaryLines;
+		};
 		const action = await showPersistentFormMenu(
 			ctx,
 			titlePrefix,
@@ -196,13 +260,9 @@ export async function editProvider(
 			menuRows,
 			cursor,
 			{
-				summaryLines: [
-					`API ${formatApiShort(draft.api)} · ${t("请求头")} ${describeProfile(draft.clientHeaderProfile, draft.api, draft.requestHeaderProfileId, requestHeaderProfiles)}`,
-					t("接入 ID 必填，且不能与已有或 pi 内置接入重复"),
-					t("Ctrl+S 保存并同步 models.json；不切换当前会话模型"),
-				],
-				onAdjust: (id) => {
-					if (!applyHorizontalToggle(draft, id)) return undefined;
+				getSummaryLines,
+				onAdjust: (id, direction) => {
+					if (!applyHorizontalToggle(draft, id, direction)) return undefined;
 					return toMenuRows(buildRows(draft, requestHeaderProfiles));
 				},
 				hints: [

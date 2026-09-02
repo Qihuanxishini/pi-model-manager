@@ -99,6 +99,10 @@ export function switchProviderDraftApiPreset(draft: ProviderDraft, nextApi: ApiK
 	const replaceBaseUrl = stillUsesPresetUrl(draft.baseUrl, previousPreset.baseUrl);
 	const replaceApiKey = draft.apiKey === previousPreset.apiKey;
 	draft.api = nextApi;
+	// [喵喵喵]: 协议切换回来时保留用户原先的选择；首次切入 Chat 才补标准模式。
+	if (nextApi === "openai-completions" && draft.openAIChatCompatibilityMode === undefined) {
+		draft.openAIChatCompatibilityMode = "standard";
+	}
 	// [喵喵喵]: 版本路径规则随协议而变（OpenAI 要 /v1、Anthropic 不要），
 	// 保留的自定义地址必须按新协议重新归一化，否则切完协议就指向错误端点。
 	draft.baseUrl = replaceBaseUrl ? nextPreset.baseUrl : resolveRuntimeBaseUrl(nextApi, draft.baseUrl);

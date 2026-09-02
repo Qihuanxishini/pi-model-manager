@@ -17,6 +17,7 @@ const {
 const { buildStateDocumentFromModelsJson } = await import("../state-store.ts");
 const {
 	createProviderDraft,
+	createProviderDraftFromStored,
 	upsertProviderInDocument,
 	upsertRequestHeaderProfileInDocument,
 } = await import("../state-document.ts");
@@ -150,4 +151,33 @@ test("显式保存 Provider 会记录所有权", () => {
 	const next = upsertProviderInDocument(state, undefined, draft);
 	assert.equal(next.providers.managed!.managed, true);
 	assert.deepEqual(next.managedProviderIds, ["managed"]);
+});
+
+test("Chat 协议兼容仅在兼容模式覆盖 supportsDeveloperRole 并保留其它 compat", () => {
+	const state = {
+		version: 2 as const,
+		providers: {
+			gateway: {
+				name: "Gateway",
+				api: "openai-completions" as const,
+				baseUrl: "https://gateway.example.test/v1",
+				managed: true,
+				clientHeaderProfile: "recommended" as const,
+				compat: { supportsDeveloperRole: false, supportsReasoningEffort: true },
+				models: [],
+			},
+		},
+		managedProviderIds: ["gateway"],
+		requestHeaderProfiles: {},
+		clientHeaderCaptures: {},
+	};
+	const compatibleDraft = createProviderDraftFromStored("gateway", state.providers.gateway);
+	assert.equal(compatibleDraft.openAIChatCompatibilityMode, "compatible");
+
+	compatibleDraft.openAIChatCompatibilityMode = "standard";
+	const standard = upsertProviderInDocument(state, "gateway", compatibleDraft);
+	assert.deepEqual(standard.providers.gateway!.compat, {
+		supportsReasoningEffort: true,
+	});
+	assert.equal(createProviderDraftFromStored("gateway", standard.providers.gateway!).openAIChatCompatibilityMode, "standard");
 });

@@ -29,6 +29,8 @@ export interface MenuHint {
 
 export interface PersistentMenuOptions {
 	summaryLines?: readonly string[];
+	// [喵喵喵]: 就地切换字段时，摘要也可能依赖草稿状态；渲染时取值才能同步刷新。
+	getSummaryLines?: () => readonly string[];
 	// [喵喵喵]: 渲染回调拿到 theme 才能给列与详情上语义色；theme 只存在于 custom 回调作用域。
 	tableHeader?: string | ((width: number, theme: Theme) => string);
 	formatRow?: (row: MenuRow, width: number, theme: Theme) => string;
@@ -419,7 +421,10 @@ function createPersistentMenu<TAction extends MenuAction | FormMenuAction | Shor
 
 				const border = theme.fg("borderMuted", "─".repeat(Math.max(0, width)));
 				const hintLines = layoutHintLines(getHints(), theme, width);
-				const summaryLines = (options.summaryLines ?? (help ? help.split("\n") : []))
+				const summarySource = options.getSummaryLines?.()
+					?? options.summaryLines
+					?? (help ? help.split("\n") : []);
+				const summaryLines = summarySource
 					.map((line) => truncateToWidth(theme.fg("dim", line), width));
 				const searchLine = searchable && (searchActive || searchQuery) ? renderQueryLine(width) : undefined;
 				const tableHeaderText = typeof options.tableHeader === "function"

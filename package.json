@@ -1,6 +1,6 @@
 {
   "name": "pi-model-manager",
-  "version": "0.3.2",
+  "version": "0.3.4",
   "description": "A TUI model and provider manager for Pi with native models.json persistence, request-header profiles, proxy routing, and protocol compatibility.",
   "type": "module",
   "main": "./index.ts",
