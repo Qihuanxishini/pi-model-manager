@@ -1,11 +1,12 @@
 {
   "name": "pi-model-manager",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "A TUI model and provider manager for Pi with native models.json persistence, request-header profiles, proxy routing, and protocol compatibility.",
   "type": "module",
   "main": "./index.ts",
   "scripts": {
-    "test": "node --experimental-strip-types --import ./tests/register-test-loader.mjs --test --test-reporter=spec tests/*.test.ts"
+    "test": "node --experimental-strip-types --import ./tests/register-test-loader.mjs --test --test-reporter=spec tests/*.test.ts",
+    "test:runtime": "node --experimental-strip-types --import ./tests/register-runtime-loader.mjs --test --test-reporter=spec tests/*-wire.test.ts"
   },
   "files": [
     "NOTICE",
@@ -70,9 +71,9 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.85.1",
-    "@earendil-works/pi-ai": ">=0.85.1",
-    "@earendil-works/pi-tui": ">=0.75.0"
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-tui": "*"
   },
   "dependencies": {
     "http-proxy-agent": "^9.1.0",

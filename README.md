@@ -4,7 +4,7 @@
 
 [![Pi](https://img.shields.io/badge/Pi-%3E%3D0.85.1-6f42c1)](https://github.com/earendil-works/pi)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.6-2f81f7.svg)](https://github.com/Qihuanxishini/pi-model-manager)
+[![Version](https://img.shields.io/badge/version-0.3.7-2f81f7.svg)](https://github.com/Qihuanxishini/pi-model-manager)
 
 一个面向 [Pi](https://github.com/earendil-works/pi) 的 TUI 模型与接入管理扩展。它以 Pi 原生 `models.json` 为模型配置的唯一权威来源，并提供接入/模型编辑、请求头身份、代理路由和协议兼容配置。
 
@@ -307,6 +307,17 @@ pi -e .
 ```
 
 扩展由 Pi 直接加载 TypeScript 入口，不需要单独构建步骤。开发时请勿提交 `state.json`、`bootstrap-meta.json`、`node_modules` 或任何请求捕获数据。
+
+测试分为替身测试和真实宿主测试，当前真实宿主验证基线为 Pi `0.99.0`：
+
+```bash
+npm test
+PI_TEST_RUNTIME_ROOT="/path/to/node_modules/@earendil-works/pi-coding-agent" npm run test:runtime
+```
+
+`npm test` 使用测试替身，并跳过真实宿主用例；`test:runtime` 只运行 `tests/*-wire.test.ts`，包括完整内置接入目录保护与协议转发检查。`PI_TEST_RUNTIME_ROOT` 指向已安装的 Pi 包目录，Windows Git Bash 下使用 `C:/...` 形式。这些测试使用本地响应与虚拟凭据，不调用外部模型服务。
+
+宿主提供的包在 `peerDependencies` 中声明为 `"*"`，实际支持版本见上方兼容性表；运行时仍复用 Pi 提供的模块。
 
 验证公开包内容：
 

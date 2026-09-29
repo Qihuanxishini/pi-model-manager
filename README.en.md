@@ -4,7 +4,7 @@ English · [简体中文](./README.md)
 
 [![Pi](https://img.shields.io/badge/Pi-%3E%3D0.85.1-6f42c1)](https://github.com/earendil-works/pi)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.6-2f81f7.svg)](https://github.com/Qihuanxishini/pi-model-manager)
+[![Version](https://img.shields.io/badge/version-0.3.7-2f81f7.svg)](https://github.com/Qihuanxishini/pi-model-manager)
 
 A TUI model and provider manager for [Pi](https://github.com/earendil-works/pi). It keeps Pi's native `models.json` as the single source of truth for model configuration while adding provider/model editing, client-header identities, proxy routing, and protocol compatibility controls.
 
@@ -303,6 +303,17 @@ pi -e .
 ```
 
 Pi loads the TypeScript entry point directly; no separate build step is required. Do not commit `state.json`, `bootstrap-meta.json`, `node_modules`, or request-capture data.
+
+Tests have separate stub and real-host entry points. The current real-host verification baseline is Pi `0.99.0`:
+
+```bash
+npm test
+PI_TEST_RUNTIME_ROOT="/path/to/node_modules/@earendil-works/pi-coding-agent" npm run test:runtime
+```
+
+`npm test` uses test stubs and skips real-host cases. `test:runtime` runs only `tests/*-wire.test.ts`, covering the complete built-in provider guard and protocol transport. Set `PI_TEST_RUNTIME_ROOT` to the installed Pi package directory; use a `C:/...` path in Windows Git Bash. These tests use local responses and fake credentials without calling external model services.
+
+Host-provided packages use `"*"` in `peerDependencies`; supported versions are listed in the compatibility table above. Runtime modules are supplied by Pi.
 
 Inspect the public package contents with:
 

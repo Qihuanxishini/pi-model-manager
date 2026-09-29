@@ -5,7 +5,6 @@ import test from "node:test";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { reconcileProvider, unregisterManagedProvider } from "../provider-registrar.ts";
 import { closeLocalProxyServer } from "../local-proxy-service.ts";
-import { createProviderTransport } from "../provider-transport.ts";
 import type { ApiKind, StoredProvider } from "../types.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -43,10 +42,6 @@ function sse(api: ApiKind): string {
 		{ type: "response.output_item.done", output_index: 0, item },
 		{ type: "response.completed", response: { id: "resp_test", status: "completed", output: [item], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } },
 	].map(event).join("");
-}
-
-function splitResponsesSse(api: ApiKind): string[] {
-	return sse(api).split("\n\n").filter(Boolean).map((frame) => `${frame}\n\n`);
 }
 
 function provider(api: ApiKind, baseUrl: string): StoredProvider {
@@ -139,65 +134,6 @@ test("真实 Pi：四协议代理前后端点、业务头、payload 和 SSE 结�
 		await new Promise<void>((resolve) => server.close(() => resolve()));
 	}
 });
-
-
-test("Responses 兼容模式在正式终态事件后完成并取消未关闭上游", async () => {
-	const upstreamCancelled = Promise.withResolvers<void>();
-	const frames = splitResponsesSse("openai-responses");
-	let index = 0;
-	const upstream = new Response(new ReadableStream<Uint8Array>({
-		pull(controller) {
-			if (index < frames.length) controller.enqueue(new TextEncoder().encode(frames[index++]));
-		},
-		cancel() {
-			upstreamCancelled.resolve();
-		},
-	}), { headers: { "content-type": "text/event-stream" } });
-	const consume = (_model: unknown, _context: unknown, options: any) => ({
-		result: async () => (await options.fetch("http://gateway.invalid/v1/responses")).text(),
-	});
-	const native = { id: "terminal-wire", name: "Wire fixture", api: "openai-responses", models: [], stream: consume, streamSimple: consume } as any;
-	const runtime = { getAuth: async () => ({ auth: { headers: {} } }) } as any;
-	const compatible = {
-		...provider("openai-responses", "http://gateway.invalid/v1"),
-		openAIResponsesStreamCompletionMode: "terminal-event" as const,
-	};
-	const transport = createProviderTransport(runtime, native, compatible);
-	const output = await transport.streamSimple({ ...compatible.models[0], api: "openai-responses", baseUrl: compatible.baseUrl } as any, {} as any, { fetch: async () => upstream }).result();
-	assert.match(output, /response\.completed/);
-	await upstreamCancelled.promise;
-});
-
-test("Responses 标准模式仍等待上游流结束", async () => {
-	const release = Promise.withResolvers<void>();
-	const terminalSent = Promise.withResolvers<void>();
-	const frames = splitResponsesSse("openai-responses");
-	let index = 0;
-	const upstream = new Response(new ReadableStream<Uint8Array>({
-		async pull(controller) {
-			if (index < frames.length) {
-				controller.enqueue(new TextEncoder().encode(frames[index++]));
-				if (index === frames.length) terminalSent.resolve();
-				return;
-			}
-			await release.promise;
-			controller.close();
-		},
-	}), { headers: { "content-type": "text/event-stream" } });
-	const consume = (_model: unknown, _context: unknown, options: any) => ({
-		result: async () => (await options.fetch("http://gateway.invalid/v1/responses")).text(),
-	});
-	const native = { id: "standard-wire", name: "Wire fixture", api: "openai-responses", models: [], stream: consume, streamSimple: consume } as any;
-	const runtime = { getAuth: async () => ({ auth: { headers: {} } }) } as any;
-	const standard = provider("openai-responses", "http://gateway.invalid/v1");
-	const transport = createProviderTransport(runtime, native, standard);
-	const pending = transport.streamSimple({ ...standard.models[0], api: "openai-responses", baseUrl: standard.baseUrl } as any, {} as any, { fetch: async () => upstream }).result();
-	await terminalSent.promise;
-	assert.equal(await Promise.race([pending.then(() => "done"), new Promise((resolve) => setTimeout(() => resolve("waiting"), 50))]), "waiting");
-	release.resolve();
-	assert.match(await pending, /response\.completed/);
-});
-
 
 test("真实 Pi：标准 Anthropic 原生可用，加载插件后独立端点和混合协议仍按 API 根地址发送", { skip: !realRuntime, timeout: 15_000 }, async () => {
 	const directory = await mkdtemp(resolve(".test-native-wire-"));

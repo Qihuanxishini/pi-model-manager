@@ -18,6 +18,11 @@ interface BuiltinCatalogModel {
 	baseUrl: string;
 }
 
+interface BuiltinCatalog {
+	models: readonly BuiltinCatalogModel[];
+	providerIds: ReadonlySet<string>;
+}
+
 const SUPPORTED_API_KINDS = new Set<ApiKind>([
 	"openai-completions",
 	"openai-responses",
@@ -40,31 +45,28 @@ const emptyCredentialStore = {
 	},
 };
 
-let builtinModelsPromise: Promise<readonly BuiltinCatalogModel[]> | undefined;
-let builtinProviderIdsPromise: Promise<ReadonlySet<string>> | undefined;
+let builtinCatalogPromise: Promise<BuiltinCatalog> | undefined;
 
-function getBuiltinModels(): Promise<readonly BuiltinCatalogModel[]> {
-	builtinModelsPromise ??= ModelRuntime.create({
+function getBuiltinCatalog(): Promise<BuiltinCatalog> {
+	builtinCatalogPromise ??= ModelRuntime.create({
 		credentials: emptyCredentialStore,
 		modelsPath: null,
 		allowModelNetwork: false,
-	}).then((runtime) =>
-		runtime.getModels().map((model) => ({
+	}).then((runtime) => ({
+		models: runtime.getModels().map((model) => ({
 			provider: String(model.provider),
 			api: String(model.api),
 			baseUrl: model.baseUrl,
 		})),
-	);
+		// [喵喵喵]: 聊天目录不包含仅提供生图或分类器的接入；保护 ID 必须取完整接入目录。
+		providerIds: new Set(runtime.getProviders().map((provider) => provider.id)),
+	}));
 
-	return builtinModelsPromise;
+	return builtinCatalogPromise;
 }
 
-export function getBuiltinProviderIds(): Promise<ReadonlySet<string>> {
-	builtinProviderIdsPromise ??= getBuiltinModels().then(
-		(models) => new Set(models.map((model) => model.provider)),
-	);
-
-	return builtinProviderIdsPromise;
+export async function getBuiltinProviderIds(): Promise<ReadonlySet<string>> {
+	return (await getBuiltinCatalog()).providerIds;
 }
 
 export async function isBuiltinProviderId(providerId: string): Promise<boolean> {
@@ -80,7 +82,7 @@ function asSupportedApiKind(value: string | undefined): ApiKind | undefined {
 export async function getBuiltinProviderDefaults(
 	providerId: string,
 ): Promise<BuiltinProviderDefaults | undefined> {
-	const firstModel = (await getBuiltinModels()).find(
+	const firstModel = (await getBuiltinCatalog()).models.find(
 		(model) => model.provider === providerId,
 	);
 	if (!firstModel) return undefined;
