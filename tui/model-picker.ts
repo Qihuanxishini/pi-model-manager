@@ -253,7 +253,7 @@ export async function pickModelIdFromList(
 						const absoluteIndex = pageStart + rowIndex;
 						const modelId = visibleModelIds[rowIndex]!;
 						const selected = absoluteIndex === selectedIndex;
-						const currentSuffix = modelId === normalizedCurrentModelId ? theme.fg("dim", t("  ← 当前")) : "";
+						const currentSuffix = modelId === normalizedCurrentModelId ? theme.fg("dim", t("  ● 当前")) : "";
 						const prefix = selected ? "❯ " : "  ";
 						const rowText = truncateToWidth(`${prefix}${modelId}${currentSuffix}`, width);
 						// [喵喵喵]: 与列表菜单用同一种选中表现（背景色），避免两套选择器手感不一致。

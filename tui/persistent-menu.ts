@@ -81,7 +81,7 @@ export function padLabel(label: string, columns: number): string {
 
 // [喵喵喵]: 可左右键切换的行值两侧加滑块标记，让能力直接可见
 export function markAdjustableValue(value: string): string {
-	return `← ${value} →`;
+	return `◀ ${value} ▶`;
 }
 
 function getSearchText(row: MenuRow): string {
@@ -541,7 +541,7 @@ export async function showOptionPicker<TChoice extends { id: string; label: stri
 		"",
 		choices.map((choice) => ({
 			id: choice.id,
-			label: choice.id === currentId ? `${choice.label}  ${t("← 当前")}` : choice.label,
+			label: choice.id === currentId ? `${choice.label}  ${t("● 当前")}` : choice.label,
 		})),
 		cursor,
 		{

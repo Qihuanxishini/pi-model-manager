@@ -38,7 +38,7 @@ const ENGLISH_MESSAGES = {
 	"搜索": "Search",
 	"无匹配项：{query}": "No matches: {query}",
 	"暂无条目": "No entries",
-	"← 当前": "← current",
+	"● 当前": "● current",
 	"移动": "Move",
 	"选择": "Select",
 	"返回": "Back",
@@ -156,7 +156,7 @@ const ENGLISH_MESSAGES = {
 	"<直接输入搜索>": "<type to search>",
 	"匹配 {matched} / {total} · {page}": "Matches {matched} / {total} · {page}",
 	"没有匹配模型；Backspace 删除搜索词，Esc 返回后可手动输入。": "No matching models. Use Backspace to edit the search, or Esc to enter an ID manually.",
-	"  ← 当前": "  ← current",
+	"  ● 当前": "  ● current",
 	"↑↓ 选择 · ←→/PgUp/PgDn 翻页 · 输入搜索 · Backspace 删除 · Enter 确认 · Esc 取消": "↑↓ select · ←→/PgUp/PgDn page · type to search · Backspace delete · Enter confirm · Esc cancel",
 
 	"OpenAI Responses · 标准 instructions/input wire": "OpenAI Responses · standard instructions/input wire",

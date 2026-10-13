@@ -123,12 +123,12 @@ test("editModel 支持在上下文窗口与最大输出行用左右键就地步�
 
 	// 初始行: modelId(0), fetch(1), modelName(2), visionInput(3), reasoning(4), contextWindow(5), maxTokens(6)
 	for (let i = 0; i < 5; i++) menu.handleInput(Key.down);
-	assert.match(menu.render(100).join("\n"), /上下文窗口\s+← 200000 →/, "adjustable 行渲染方向键标记");
+	assert.match(menu.render(100).join("\n"), /上下文窗口\s+◀ 200000 ▶/, "adjustable 行渲染方向键标记");
 
 	// 在上下文窗口行按左键 -> 128000
 	menu.handleInput(Key.left);
 	assert.equal(draft.contextWindow, 128_000);
-	assert.match(menu.render(100).join("\n"), /上下文窗口\s+← 128000 →/);
+	assert.match(menu.render(100).join("\n"), /上下文窗口\s+◀ 128000 ▶/);
 
 	// 按右键 -> 200000 -> 256000
 	menu.handleInput(Key.right);
@@ -138,12 +138,12 @@ test("editModel 支持在上下文窗口与最大输出行用左右键就地步�
 
 	// 移动到最大输出行 (index 6)
 	menu.handleInput(Key.down);
-	assert.match(menu.render(100).join("\n"), /最大输出\s+← 64000 →/);
+	assert.match(menu.render(100).join("\n"), /最大输出\s+◀ 64000 ▶/);
 
 	// 按左键 -> 32000
 	menu.handleInput(Key.left);
 	assert.equal(draft.maxTokens, 32_000);
-	assert.match(menu.render(100).join("\n"), /最大输出\s+← 32000 →/);
+	assert.match(menu.render(100).join("\n"), /最大输出\s+◀ 32000 ▶/);
 
 	// 按右键 -> 64000 -> 128000
 	menu.handleInput(Key.right);
