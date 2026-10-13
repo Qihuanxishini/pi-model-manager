@@ -11,7 +11,7 @@ import { t } from "../i18n.ts";
 import type { AnthropicThinkingProtocol, BuiltInClientHeaderProfileId, ModelDraft, ModelListFetchOutcome, ReasoningMode, StoredClientHeaderCapture, StoredRequestHeaderProfile } from "../types.ts";
 import { fetchModelIds } from "./model-list-fetch.ts";
 import { pickModelIdFromList } from "./model-picker.ts";
-import { showOptionPicker, showPersistentFormMenu, padLabel, type MenuCursor } from "./persistent-menu.ts";
+import { showOptionPicker, showPersistentFormMenu, padLabel, type MenuCursor, type HorizontalDirection } from "./persistent-menu.ts";
 import {
 	describeVisionInput,
 	formatApiShort,
@@ -54,8 +54,77 @@ function getIntegerFieldLabel(field: "contextWindow" | "maxTokens"): string {
 }
 
 
-// 开关字段在两个方向上都是取反，因此不看 direction；返回是否真的切换了字段。
-function applyHorizontalToggle(draft: ModelDraft, fieldId: string): boolean {
+// [喵喵喵]: 上下文窗口常用十进制档位 (128k ~ 500k)
+export const CONTEXT_WINDOW_PRESETS: readonly number[] = [
+	128_000,
+	200_000,
+	256_000,
+	272_000,
+	300_000,
+	400_000,
+	500_000,
+];
+
+// [喵喵喵]: 输出上限按二进制整 K 幂次 (16k ~ 128k, 即 16384 ~ 131072)
+export const MAX_TOKENS_PRESETS: readonly number[] = [
+	16_384,
+	32_768,
+	65_536,
+	131_072,
+];
+
+export function cycleNumericPreset(
+	current: number,
+	presets: readonly number[],
+	direction: HorizontalDirection,
+): number {
+	if (presets.length === 0) return current;
+	if (direction === "left") {
+		for (let i = presets.length - 1; i >= 0; i--) {
+			if (presets[i] < current) return presets[i];
+		}
+		return presets[0];
+	}
+	for (let i = 0; i < presets.length; i++) {
+		if (presets[i] > current) return presets[i];
+	}
+	return presets[presets.length - 1];
+}
+
+export function parsePositiveIntegerWithUnit(
+	rawInput: string,
+	field: "contextWindow" | "maxTokens",
+): number | undefined {
+	const trimmed = rawInput.trim();
+	if (!trimmed) return undefined;
+
+	const match = /^([0-9]+(?:\.[0-9]+)?)\s*([kmKM])?$/i.exec(trimmed);
+	if (!match) return undefined;
+
+	const num = Number.parseFloat(match[1]);
+	if (!Number.isFinite(num) || num <= 0) return undefined;
+
+	const unit = match[2]?.toLowerCase();
+	if (unit === "m") {
+		const multiplier = field === "contextWindow" ? 1_000_000 : 1024 * 1024;
+		return Math.round(num * multiplier);
+	}
+	if (unit === "k") {
+		const multiplier = field === "contextWindow" ? 1_000 : 1024;
+		return Math.round(num * multiplier);
+	}
+
+	// 纯数字无单位时，若数值小于 1000（如输入 64、128、200），按习惯视作千倍处理
+	if (num < 1000) {
+		const multiplier = field === "contextWindow" ? 1_000 : 1024;
+		return Math.round(num * multiplier);
+	}
+
+	return Math.round(num);
+}
+
+// 开关字段在两个方向上取反；数值字段按 direction 在预设间步进。
+function applyHorizontalToggle(draft: ModelDraft, fieldId: string, direction: HorizontalDirection): boolean {
 	if (fieldId === "visionInput") {
 		draft.inputKinds = supportsVisionInput(draft.inputKinds) ? ["text"] : ["text", "image"];
 		return true;
@@ -70,6 +139,14 @@ function applyHorizontalToggle(draft: ModelDraft, fieldId: string): boolean {
 	}
 	if (fieldId === "openAIServiceTier") {
 		draft.openAIServiceTier = draft.openAIServiceTier === "priority" ? undefined : "priority";
+		return true;
+	}
+	if (fieldId === "contextWindow") {
+		draft.contextWindow = cycleNumericPreset(draft.contextWindow, CONTEXT_WINDOW_PRESETS, direction);
+		return true;
+	}
+	if (fieldId === "maxTokens") {
+		draft.maxTokens = cycleNumericPreset(draft.maxTokens, MAX_TOKENS_PRESETS, direction);
 		return true;
 	}
 	return false;
@@ -95,8 +172,8 @@ function buildRows(draft: ModelDraft): FieldRow[] {
 		rows.push({ id: "openAIServiceTier", label: "Fast mode", value: describeOpenAIServiceTier(draft), adjustable: true });
 	}
 	rows.push(
-		{ id: "contextWindow", label: t("上下文窗口"), value: String(draft.contextWindow) },
-		{ id: "maxTokens", label: t("最大输出"), value: String(draft.maxTokens) },
+		{ id: "contextWindow", label: t("上下文窗口"), value: String(draft.contextWindow), adjustable: true },
+		{ id: "maxTokens", label: t("最大输出"), value: String(draft.maxTokens), adjustable: true },
 	);
 	return rows;
 }
@@ -172,8 +249,8 @@ async function editIntField(ctx: ExtensionCommandContext, draft: ModelDraft, fie
 	if (value === undefined) return;
 	const trimmed = value.trim();
 	if (!trimmed) return;
-	const parsed = Number.parseInt(trimmed, 10);
-	if (!Number.isFinite(parsed) || parsed <= 0) {
+	const parsed = parsePositiveIntegerWithUnit(trimmed, field);
+	if (parsed === undefined || parsed <= 0) {
 		ctx.ui.notify(t("{label} 必须是正整数", { label }), "warning");
 		return;
 	}
@@ -295,8 +372,8 @@ export async function editModel(
 					t("接入 {providerId} · API {api}", { providerId: draft.providerId, api: formatApiShort(draft.api) }),
 					t("Ctrl+S 保存并启用模型；不切换当前会话模型"),
 				],
-				onAdjust: (id) => {
-					if (!applyHorizontalToggle(draft, id)) return undefined;
+				onAdjust: (id, direction) => {
+					if (!applyHorizontalToggle(draft, id, direction)) return undefined;
 					return toMenuRows(buildRows(draft));
 				},
 				hints: [

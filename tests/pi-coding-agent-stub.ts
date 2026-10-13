@@ -43,3 +43,9 @@ export class SettingsManager {
 		throw new Error("当前测试不应访问 SettingsManager");
 	}
 }
+
+export class BorderedLoader {
+	signal = new AbortController().signal;
+	onAbort?: () => void;
+	constructor(_tui: unknown, _theme: unknown, _text: string, _options?: unknown) {}
+}
