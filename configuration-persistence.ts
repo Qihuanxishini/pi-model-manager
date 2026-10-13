@@ -8,7 +8,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 type RegistryRefreshContext = Pick<ExtensionContext, "modelRegistry">;
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { atomicWriteText } from "./atomic-write.ts";
+import { atomicWriteText, SECURE_FILE_MODE } from "./atomic-write.ts";
 import { formatUnknownError, isObjectRecord, stringifyJson } from "./common.ts";
 import { withConfigurationLock } from "./configuration-lock.ts";
 import { hashTextContent, readStableTextFileSnapshot } from "./file-snapshot.ts";
@@ -123,7 +123,7 @@ async function classifyTransition(path: string, transition: FileTransition): Pro
 }
 
 async function finishTransition(path: string, transition: FileTransition, status: "old" | "target"): Promise<void> {
-	if (status === "old") await atomicWriteText(path, transition.targetSource);
+	if (status === "old") await atomicWriteText(path, transition.targetSource, SECURE_FILE_MODE);
 	const completed = await readStableTextFileSnapshot(path);
 	if (completed.contentHash !== transition.targetHash) {
 		throw new Error(t("{path} 写入后内容签名不匹配；已保留 {transactionPath} 供恢复。", { path, transactionPath: TRANSACTION_PATH }));
@@ -184,7 +184,7 @@ async function writeConfigurationTransaction(
 	if (metadataSnapshot.metadata.version < 5) {
 		const backupPath = join(STATE_DIR, `base-url-v5-${hashTextContent(journal.modelsJson.oldHash + journal.metadataState.oldHash).slice(0, 16)}.json`);
 		const backup = await readStableTextFileSnapshot(backupPath);
-		if (backup.source === undefined) await atomicWriteText(backupPath, stringifyJson(journal), 0o600);
+		if (backup.source === undefined) await atomicWriteText(backupPath, stringifyJson(journal), SECURE_FILE_MODE);
 		else {
 			const saved = parseTransactionJournal(backup.source);
 			if (saved.modelsJson.oldHash !== journal.modelsJson.oldHash || saved.metadataState.oldHash !== journal.metadataState.oldHash) {
@@ -192,7 +192,7 @@ async function writeConfigurationTransaction(
 			}
 		}
 	}
-	await atomicWriteText(TRANSACTION_PATH, stringifyJson(journal));
+	await atomicWriteText(TRANSACTION_PATH, stringifyJson(journal), SECURE_FILE_MODE);
 
 	try {
 		const modelsStatus = await classifyTransition(MODELS_JSON_PATH, journal.modelsJson);

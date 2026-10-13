@@ -105,6 +105,10 @@ export function switchProviderDraftApiPreset(draft: ProviderDraft, nextApi: ApiK
 	}
 	// [喵喵喵]: 版本路径规则随协议而变（OpenAI 要 /v1、Anthropic 不要），
 	// 保留的自定义地址必须按新协议重新归一化，否则切完协议就指向错误端点。
-	draft.baseUrl = replaceBaseUrl ? nextPreset.baseUrl : resolveRuntimeBaseUrl(nextApi, draft.baseUrl);
+	try {
+		draft.baseUrl = replaceBaseUrl ? nextPreset.baseUrl : resolveRuntimeBaseUrl(nextApi, draft.baseUrl);
+	} catch {
+		draft.baseUrl = nextPreset.baseUrl;
+	}
 	if (replaceApiKey) draft.apiKey = nextPreset.apiKey;
 }

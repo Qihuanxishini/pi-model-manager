@@ -428,7 +428,8 @@ export function buildModelFromDraft(
 		next.openAIServiceTier = "priority";
 	}
 
-	if (effectiveApi === "anthropic-messages" && draft.anthropicThinkingProtocol) {
+	// [喵喵喵]: 仅在启用推理时维护 Adaptive 思考协议；关闭推理时彻底清理兼容标记，避免误剥离协议头
+	if (effectiveApi === "anthropic-messages" && draft.reasoningMode === "enabled" && draft.anthropicThinkingProtocol) {
 		const existingOverride = existing?.compat?.forceAdaptiveThinking;
 		const providerForcesAdaptiveThinking = providerCompat?.forceAdaptiveThinking === true;
 		if (draft.anthropicThinkingProtocol === "adaptive") {
@@ -439,6 +440,11 @@ export function buildModelFromDraft(
 		} else {
 			delete compat.forceAdaptiveThinking;
 		}
+	} else if (effectiveApi === "anthropic-messages" && draft.reasoningMode !== "enabled" && providerCompat?.forceAdaptiveThinking === true) {
+		// [喵喵喵]: 关闭推理但接入级强制 adaptive 时显式写 false 覆盖继承值，否则合并后仍会注入 beta 请求头
+		compat.forceAdaptiveThinking = false;
+	} else {
+		delete compat.forceAdaptiveThinking;
 	}
 
 	if (Object.keys(compat).length > 0) next.compat = compat;
@@ -448,9 +454,20 @@ export function buildModelFromDraft(
 
 // ========== 请求头 ==========
 
-export function createRequestHeaderProfileDraft(): RequestHeaderProfileDraft {
+export function createRequestHeaderProfileDraft(existingIds?: Iterable<string>): RequestHeaderProfileDraft {
+	let profileId = "custom-headers";
+	if (existingIds) {
+		const set = new Set(existingIds);
+		if (set.has(profileId)) {
+			let counter = 1;
+			while (set.has(`custom-headers-${counter}`)) {
+				counter += 1;
+			}
+			profileId = `custom-headers-${counter}`;
+		}
+	}
 	return {
-		profileId: "custom-headers",
+		profileId,
 		profileName: t("自定义请求头"),
 		headers: {},
 		selectedIndex: 0,

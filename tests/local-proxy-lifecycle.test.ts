@@ -31,3 +31,16 @@ test("无效代理 URL 的错误不暴露 userinfo", async () => {
 		},
 	);
 });
+
+test("openTemporaryLocalProxyRoute 对根路径修整尾斜杠防止双斜杠与解析错误", async () => {
+	const route = await openTemporaryLocalProxyRoute(
+		"google-provider",
+		"https://gemini.example.com/",
+		"http://127.0.0.1:7890",
+	);
+	// 验证生成的 URL 不以双斜杠结尾
+	assert.doesNotMatch(route.url, /\/\/$/);
+	assert.match(route.url, /google-provider%2Fmodel-list%2F[0-9a-f-]{36}$/i);
+	route.close();
+	await closeLocalProxyServer();
+});

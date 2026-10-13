@@ -248,9 +248,13 @@ async function editStoredModel(
 		return false;
 	}
 	const draft = createModelDraftFromStoredModel(providerId, provider, model);
-	const outcome = await editModel(ctx, draft, t("编辑模型 {fullId}", { fullId: getModelFullId(providerId, modelId) }), requestHeaderProfiles, clientHeaderCaptures);
-	if (outcome.action !== "save") return false;
-	return saveModelDraft(pi, ctx, outcome.draft, modelId);
+	// [喵喵喵]: 保存失败时保留草稿继续编辑，防止用户修改的 contextWindow/maxTokens 等配置丢失
+	while (true) {
+		const outcome = await editModel(ctx, draft, t("编辑模型 {fullId}", { fullId: getModelFullId(providerId, modelId) }), requestHeaderProfiles, clientHeaderCaptures);
+		if (outcome.action !== "save") return false;
+		const saved = await saveModelDraft(pi, ctx, outcome.draft, modelId);
+		if (saved) return true;
+	}
 }
 
 async function showProviderMenu(pi: ExtensionAPI, ctx: ExtensionCommandContext, providerId: string): Promise<boolean> {
@@ -301,16 +305,26 @@ async function showProviderMenu(pi: ExtensionAPI, ctx: ExtensionCommandContext, 
 		if (action.type === "shortcut") {
 			if (action.shortcut === "add-model") {
 				const draft = createModelDraftForStoredProvider(providerId, currentProvider);
-				const outcome = await editModel(ctx, draft, t("添加模型到 {providerId}", { providerId }), state.requestHeaderProfiles, state.clientHeaderCaptures);
-				if (outcome.action === "save") await saveModelDraft(pi, ctx, outcome.draft, undefined);
+				// [喵喵喵]: 新增模型校验或保存失败时保留草稿
+				while (true) {
+					const outcome = await editModel(ctx, draft, t("添加模型到 {providerId}", { providerId }), state.requestHeaderProfiles, state.clientHeaderCaptures);
+					if (outcome.action !== "save") break;
+					const saved = await saveModelDraft(pi, ctx, outcome.draft, undefined);
+					if (saved) break;
+				}
 				continue;
 			}
 			if (action.shortcut === "edit-provider") {
 				const draft = createProviderDraftFromStored(providerId, currentProvider);
-				const outcome = await editProvider(ctx, draft, t("编辑接入 {providerId}", { providerId }), state.requestHeaderProfiles);
-				if (outcome.action === "save") {
-					await saveProviderDraft(pi, ctx, outcome.draft, providerId);
-					if (outcome.draft.providerId !== providerId) return true;
+				// [喵喵喵]: 编辑接入保存失败或重命名冲突时保留草稿，不退回主面板
+				while (true) {
+					const outcome = await editProvider(ctx, draft, t("编辑接入 {providerId}", { providerId }), state.requestHeaderProfiles);
+					if (outcome.action !== "save") break;
+					const saved = await saveProviderDraft(pi, ctx, outcome.draft, providerId);
+					if (saved) {
+						if (outcome.draft.providerId !== providerId) return true;
+						break;
+					}
 				}
 				continue;
 			}
@@ -351,9 +365,12 @@ async function createProviderAndModel(pi: ExtensionAPI, ctx: ExtensionCommandCon
 		const stored = stagedState.providers[providerOutcome.draft.providerId]!;
 		ctx.ui.notify(t("请继续添加第一个模型；取消模型编辑则不会创建该接入。"), "info");
 		const modelDraft = createModelDraftForStoredProvider(providerOutcome.draft.providerId, stored);
-		const modelOutcome = await editModel(ctx, modelDraft, t("添加模型到 {providerId}", { providerId: providerOutcome.draft.providerId }), stagedState.requestHeaderProfiles, stagedState.clientHeaderCaptures);
-		if (modelOutcome.action !== "save") return false;
-		return saveNewProviderAndModelDraft(pi, ctx, providerOutcome.draft, modelOutcome.draft);
+		while (true) {
+			const modelOutcome = await editModel(ctx, modelDraft, t("添加模型到 {providerId}", { providerId: providerOutcome.draft.providerId }), stagedState.requestHeaderProfiles, stagedState.clientHeaderCaptures);
+			if (modelOutcome.action !== "save") return false;
+			const saved = await saveNewProviderAndModelDraft(pi, ctx, providerOutcome.draft, modelOutcome.draft);
+			if (saved) return true;
+		}
 	}
 }
 

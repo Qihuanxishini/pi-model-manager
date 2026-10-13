@@ -196,7 +196,12 @@ function createPersistentMenu<TAction extends MenuAction | FormMenuAction | Shor
 
 		const syncCursor = (activeRows: MenuRow[]): void => {
 			const row = activeRows[selectedIndex];
-			if (row) cursor.index = currentRows.indexOf(row);
+			if (row) {
+				cursor.index = currentRows.indexOf(row);
+			} else {
+				// [喵喵喵]: 过滤为空时重置光标为 -1，防止外层快捷键取到陈旧索引误操作隐藏条目
+				cursor.index = -1;
+			}
 		};
 
 		const requestRender = (): void => {

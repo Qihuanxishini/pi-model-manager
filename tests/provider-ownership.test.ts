@@ -221,3 +221,54 @@ test("Responses 流结束兼容只写入插件 Metadata 并可恢复", async () 
 	assert.equal(restored.providers.gateway!.openAIResponsesStreamCompletionMode, "terminal-event");
 	assert.equal((nativeModels.providers.gateway as Record<string, unknown>).openAIResponsesStreamCompletionMode, undefined);
 });
+
+
+test("读回时剥离与接入级同名同值的继承请求头，保留模型独有头", async () => {
+	const models = {
+		providers: {
+			stripme: {
+				name: "Strip Me",
+				api: "openai-completions",
+				baseUrl: "https://strip.test/v1",
+				headers: { "X-Shared": "1", "x-case-insensitive": "a" },
+				models: [{
+					id: "m1",
+					headers: { "X-Shared": "1", "X-Model-Only": "2", "x-CASE-INSensitive": "a" },
+				}],
+			},
+		},
+	};
+	const metadata = createEmptyMetadata();
+	metadata.managedProviderIds = ["stripme"];
+	const state = await buildStateDocumentFromModelsJson(models, metadata);
+	const headers = state.providers.stripme!.models[0]!.headers!;
+	assert.equal(headers["X-Shared"], undefined, "与接入级同名同值的头应被剥离");
+	assert.equal(headers["x-case-insensitive"], undefined, "头名比对应大小写不敏感");
+	assert.equal(headers["X-Model-Only"], "2", "模型独有头必须保留");
+});
+
+test("接入级请求头往返后重新写回模型条目（写回合并语义不变）", async () => {
+	const { buildSynchronizedModelsDocument } = await import("../models-json-sync.ts");
+	const models = {
+		providers: {
+			syncme: {
+				name: "Sync Me",
+				api: "openai-completions",
+				baseUrl: "https://sync.test/v1",
+				headers: { "X-Shared": "1" },
+				models: [{
+					id: "m1",
+					headers: { "X-Shared": "1", "X-Model-Only": "2" },
+				}],
+			},
+		},
+	};
+	const metadata = createEmptyMetadata();
+	metadata.managedProviderIds = ["syncme"];
+	const state = await buildStateDocumentFromModelsJson(models, metadata);
+	// 读回后模型内部态已剥离继承头，但同步写回时必须重新合并，保证文件语义不丢失
+	const synced = buildSynchronizedModelsDocument(state, models, [], []);
+	const syncedModel = synced.providers.syncme!.models.find((m: { id: string }) => m.id === "m1")!;
+	assert.equal(syncedModel.headers!["X-Shared"], "1");
+	assert.equal(syncedModel.headers!["X-Model-Only"], "2");
+});

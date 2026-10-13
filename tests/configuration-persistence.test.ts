@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after, beforeEach } from "node:test";
@@ -245,4 +245,26 @@ test("baseUrl 迁移只挑受管理且确实需要归一化的接入", () => {
 
 	// 迁移后重跑检测必须为空，保证不会每次启动都写盘
 	assert.deepEqual(findProvidersNeedingBaseUrlNormalization(next), []);
+});
+
+test("atomicWriteText 显式传入 SECURE_FILE_MODE 时配置文件落地 0o600", async () => {
+	const { atomicWriteText, SECURE_FILE_MODE } = await import("../atomic-write.ts");
+	assert.equal(SECURE_FILE_MODE, 0o600);
+	const testFile = join(agentDir, "secure-test.json");
+	await atomicWriteText(testFile, '{"secure":true}', SECURE_FILE_MODE);
+	const content = await readFile(testFile, "utf8");
+	assert.equal(content, '{"secure":true}');
+	if (process.platform === "win32") return;
+	assert.equal((await stat(testFile)).mode & 0o777, 0o600);
+});
+
+test("atomicWriteText 未传 mode 时不强制权限，共享配置文件保持默认 umask", async () => {
+	const { atomicWriteText } = await import("../atomic-write.ts");
+	const testFile = join(agentDir, "shared-test.json");
+	const controlFile = join(agentDir, "shared-control.json");
+	await atomicWriteText(testFile, "{}");
+	await writeFile(controlFile, "{}", "utf8");
+	if (process.platform === "win32") return;
+	const [testStats, controlStats] = await Promise.all([stat(testFile), stat(controlFile)]);
+	assert.equal(testStats.mode & 0o777, controlStats.mode & 0o777);
 });

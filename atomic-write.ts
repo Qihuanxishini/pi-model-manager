@@ -56,13 +56,16 @@ async function renameWithRetry(sourcePath: string, targetPath: string): Promise<
 
 
 
+// [喵喵喵]: 含明文 API Key 的配置文件应显式传入 0o600；默认不强制 mode，避免波及 Pi 核心等共享配置文件的权限
+export const SECURE_FILE_MODE = 0o600;
+
 export async function atomicWriteText(targetPath: string, content: string, mode?: number): Promise<void> {
 	await mkdir(dirname(targetPath), { recursive: true });
 	const tempPath = `${targetPath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
 	let tempHasCompleteContent = false;
 
 	try {
-		await writeFile(tempPath, content, { encoding: "utf8", mode });
+		await writeFile(tempPath, content, { encoding: "utf8", ...(mode === undefined ? {} : { mode }) });
 		tempHasCompleteContent = true;
 		await renameWithRetry(tempPath, targetPath);
 	} catch (error) {

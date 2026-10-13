@@ -309,9 +309,14 @@ async function editStoredProfile(pi: ExtensionAPI, ctx: ExtensionCommandContext,
 		ctx.ui.notify(t("请求头不存在：{profileId}", { profileId }), "warning");
 		return true;
 	}
-	const outcome = await editProfile(ctx, createRequestHeaderProfileDraftFromStored(profileId, profile), t("编辑请求头 {profileId}", { profileId }));
-	if (outcome.action !== "save") return false;
-	return saveProfile(pi, ctx, outcome.draft, profileId);
+	const draft = createRequestHeaderProfileDraftFromStored(profileId, profile);
+	// [喵喵喵]: 保存失败时保留当前草稿重试，防止用户输入的头信息与名称被强制退出丢弃
+	while (true) {
+		const outcome = await editProfile(ctx, draft, t("编辑请求头 {profileId}", { profileId }));
+		if (outcome.action !== "save") return false;
+		const saved = await saveProfile(pi, ctx, outcome.draft, profileId);
+		if (saved) return true;
+	}
 }
 
 type HeaderProfileShortcut = "new-profile" | "delete-profile";
@@ -367,8 +372,14 @@ export async function runHeaderProfilesPanel(pi: ExtensionAPI, ctx: ExtensionCom
 		if (action.type === "cancel") return;
 		if (action.type === "shortcut") {
 			if (action.shortcut === "new-profile") {
-				const outcome = await editProfile(ctx, createRequestHeaderProfileDraft(), t("新建请求头"));
-				if (outcome.action === "save") await saveProfile(pi, ctx, outcome.draft, undefined);
+				const draft = createRequestHeaderProfileDraft(profileIds);
+				// [喵喵喵]: 新建保存失败时保留已输入的草稿继续编辑
+				while (true) {
+					const outcome = await editProfile(ctx, draft, t("新建请求头"));
+					if (outcome.action !== "save") break;
+					const saved = await saveProfile(pi, ctx, outcome.draft, undefined);
+					if (saved) break;
+				}
 				continue;
 			}
 			const selectedProfileId = rows[cursor.index]?.profileId;

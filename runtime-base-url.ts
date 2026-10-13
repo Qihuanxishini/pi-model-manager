@@ -57,9 +57,14 @@ export function fromNativeBaseUrl(
 	legacyNormalization = false,
 ): string {
 	if (api !== "anthropic-messages" || anthropicApiRoot) return baseUrl;
-	const url = new URL(baseUrl.trim());
-	trimPath(url);
-	// [喵喵喵]: 旧版插件在注册前剥去末尾 /v1；读取旧配置必须先复现该行为再显式补回版本路径。
-	if (legacyNormalization && url.pathname.toLowerCase().endsWith("/v1")) url.pathname = url.pathname.slice(0, -3) || "/";
-	return appendUrlPath(formatUrl(url), "v1");
+	try {
+		const url = new URL(baseUrl.trim());
+		trimPath(url);
+		// [喵喵喵]: 旧版插件在注册前剥去末尾 /v1；读取旧配置必须先复现该行为再显式补回版本路径。
+		if (legacyNormalization && url.pathname.toLowerCase().endsWith("/v1")) url.pathname = url.pathname.slice(0, -3) || "/";
+		return appendUrlPath(formatUrl(url), "v1");
+	} catch {
+		// [喵喵喵]: 受控简化 — 解析失败的 Base URL 原样返回交由上层校验拦截；边界：非交互调用方（如状态读回）拿不到提示；升级：出现排查诉求时为读回路径接入统一的告警通道
+		return baseUrl;
+	}
 }

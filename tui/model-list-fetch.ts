@@ -140,7 +140,12 @@ async function requestModelIds(
 		temporaryProxyRoute = proxyConfig
 			? await openProxyRouteWithSignal(proxyConfig, url, signal)
 			: undefined;
-		const response = await fetch(temporaryProxyRoute?.url ?? url, { headers, signal });
+		// [喵喵喵]: 经由本地代理时强制禁止自动跟随 3xx 重定向，防止直连上游泄露 IP
+		const response = await fetch(temporaryProxyRoute?.url ?? url, {
+			headers,
+			signal,
+			redirect: temporaryProxyRoute ? "manual" : "follow",
+		});
 		const text = await readBoundedResponseText(response, signal);
 		if (!response.ok) {
 			const reason = response.status === 401 || response.status === 403 ? t("认证失败，请检查 API key 和认证头")

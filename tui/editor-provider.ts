@@ -8,7 +8,7 @@ import { hasStringRecordEntries } from "../common.ts";
 import { t } from "../i18n.ts";
 import { switchProviderDraftApiPreset } from "../presets/providers.ts";
 import { redactUrlForDisplay } from "../sensitive-redaction.ts";
-import { resolveRuntimeBaseUrl } from "../runtime-base-url.ts";
+import { resolveRuntimeBaseUrl, validateRequestBaseUrl } from "../runtime-base-url.ts";
 import {
 	DEFAULT_PROVIDER_HTTP_PROXY_URL,
 	type OpenAIChatCompatibilityMode,
@@ -95,7 +95,7 @@ function buildRows(
 		{ id: "api", label: t("API 协议"), value: draft.api },
 		{ id: "providerId", label: t("接入 ID（必填）"), value: draft.providerId || t("<必填>") },
 		{ id: "providerName", label: t("名称"), value: draft.providerName || t("<空>") },
-		{ id: "baseUrl", label: "Base URL", value: draft.baseUrl },
+		{ id: "baseUrl", label: "Base URL", value: redactUrlForDisplay(draft.baseUrl) },
 	];
 	if (draft.api === "openai-completions") {
 		rows.push({
@@ -270,9 +270,14 @@ async function editField(
 	if (value === undefined) return;
 	const trimmed = value.trim();
 	if (!trimmed) return;
-	// [喵喵喵]: 当场归一化成 SDK 可直接使用的根地址，让 models.json 存的就是最终请求地址；
-	// 否则插件未加载时 pi 会用未补全的值直接请求，补全结果也无法在界面上核对。
-	draft.baseUrl = resolveRuntimeBaseUrl(draft.api, trimmed);
+	// [喵喵喵]: 当场校验并归一化成 SDK 可直接使用的根地址；若输入有误通过通知友好提示，避免未捕获异常导致 TUI 闪退丢失草稿
+	try {
+		validateRequestBaseUrl(trimmed);
+		draft.baseUrl = resolveRuntimeBaseUrl(draft.api, trimmed);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		ctx.ui.notify(t("Base URL 格式错误：{error}", { error: message }), "warning");
+	}
 }
 
 export type ProviderEditOutcome =

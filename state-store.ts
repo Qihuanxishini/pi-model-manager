@@ -103,12 +103,29 @@ function resolveProviderCustomHeaders(
 	return providerMetadata?.customClientHeaders ?? {};
 }
 
+function stripProviderInheritedHeaders(
+	modelHeaders: Record<string, string> | undefined,
+	providerHeaders: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+	if (!modelHeaders || !providerHeaders) return modelHeaders;
+	const result = cloneStringRecord(modelHeaders);
+	for (const [pName, pValue] of Object.entries(providerHeaders)) {
+		for (const [mName, mValue] of Object.entries(result)) {
+			if (mName.toLowerCase() === pName.toLowerCase() && mValue === pValue) {
+				delete result[mName];
+			}
+		}
+	}
+	return hasStringRecordEntries(result) ? result : undefined;
+}
+
 function buildStoredModelFromModelsJson(
 	providerId: string,
 	providerApi: ApiKind,
 	providerBaseUrl: string,
 	providerNativeBaseUrl: string,
 	providerCompat: CompatSettings | undefined,
+	providerHeaders: Record<string, string> | undefined,
 	managed: boolean,
 	clientHeaderProfile: StoredProvider["clientHeaderProfile"],
 	customClientHeaders: Record<string, string>,
@@ -130,7 +147,7 @@ function buildStoredModelFromModelsJson(
 		)
 		: undefined;
 	const nativeHeaders = managed
-		? stripManagedClientHeaders(model.headers, profileHeaders)
+		? stripProviderInheritedHeaders(stripManagedClientHeaders(model.headers, profileHeaders), providerHeaders)
 		: cloneStringRecord(model.headers);
 	const stored: StoredModel = {
 		id: model.id,
@@ -199,6 +216,7 @@ async function buildStoredProviderFromModelsJson(
 			baseUrl,
 			nativeBaseUrl,
 			providerCompat,
+			entry.headers,
 			managed,
 			clientHeaderProfile,
 			customClientHeaders,

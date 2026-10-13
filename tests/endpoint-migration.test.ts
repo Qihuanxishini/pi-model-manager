@@ -138,3 +138,30 @@ test("接管原生 Anthropic 接入保留其原有聊天地址和混合协议模
 	assert.equal(redirected.providers.managed!.models[0]!.baseUrl, undefined);
 	assert.equal(redirected.providers.managed!.models[1]!.baseUrl, undefined);
 });
+
+test("fromNativeBaseUrl 与 switchProviderDraftApiPreset 在非法 URL 下安全降级不崩溃", async () => {
+	const { fromNativeBaseUrl } = await import("../runtime-base-url.ts");
+	const { switchProviderDraftApiPreset } = await import("../presets/providers.ts");
+
+	// fromNativeBaseUrl 遇到非标准 URL 保持原样不抛错
+	assert.equal(fromNativeBaseUrl("anthropic-messages", "not-a-valid-url"), "not-a-valid-url");
+	assert.equal(fromNativeBaseUrl("anthropic-messages", "$MY_GATEWAY_URL"), "$MY_GATEWAY_URL");
+
+	// switchProviderDraftApiPreset 遇到损坏 URL 自动降级为目标协议预设地址
+	const brokenDraft = {
+		providerId: "test",
+		providerName: "Test",
+		api: "openai-completions" as const,
+		baseUrl: "http://[invalid-url",
+		apiKey: "$KEY",
+		authHeader: false,
+		clientHeaderProfile: "recommended" as const,
+		customClientHeaders: {},
+		httpProxyEnabled: false,
+		httpProxyUrl: "",
+		selectedIndex: 0,
+	};
+	switchProviderDraftApiPreset(brokenDraft, "anthropic-messages");
+	assert.equal(brokenDraft.api, "anthropic-messages");
+	assert.equal(brokenDraft.baseUrl, "https://api.anthropic.com/v1");
+});

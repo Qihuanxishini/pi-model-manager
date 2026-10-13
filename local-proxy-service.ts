@@ -4,6 +4,7 @@
 // 不修改 pi 本体：开启代理的接入点在运行时注册为 127.0.0.1 本地地址，
 // 本服务再通过用户配置的 HTTP/HTTPS 代理转发到真实上游。
 
+import { randomUUID } from "node:crypto";
 import http, { type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
 import https from "node:https";
 import { HttpProxyAgent } from "http-proxy-agent";
@@ -28,7 +29,6 @@ let server: http.Server | undefined;
 let listenPromise: Promise<number> | undefined;
 let listenPort: number | undefined;
 let closingPromise: Promise<void> | undefined;
-let temporaryRouteSequence = 0;
 
 const HOP_BY_HOP_HEADERS = new Set([
 	"connection",
@@ -93,9 +93,25 @@ function ensureSupportedProxyProtocol(proxy: URL): void {
 	}
 }
 
-function pipeResponse(upstreamResponse: IncomingMessage, response: ServerResponse): void {
+function pipeResponse(upstreamResponse: IncomingMessage, response: ServerResponse, route: ProviderProxyRoute): void {
+	const statusCode = upstreamResponse.statusCode ?? 502;
+	// [喵喵喵]: 上游返回 3xx 重定向时，若重定向目标跨域，直接在代理层拦截，防止客户端在跟随重定向时泄露真实 IP
+	if (statusCode >= 300 && statusCode < 400 && upstreamResponse.headers.location) {
+		try {
+			const target = new URL(upstreamResponse.headers.location, route.upstreamOrigin);
+			if (target.origin !== route.upstreamOrigin) {
+				response.writeHead(502, { "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff" });
+				response.end(t("代理安全拦截：上游返回了跨域重定向至 {target}，已拒绝跟随", { target: target.origin }));
+				// [喵喵喵]: 拦截后主动销毁上游响应，避免未消费的 body 占用 socket 直到超时
+				upstreamResponse.destroy();
+				return;
+			}
+		} catch {
+			// 非法 location 则继续透传交由客户端处理
+		}
+	}
 	const headers = stripHopByHopHeaders(upstreamResponse.headers);
-	response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.statusMessage, headers);
+	response.writeHead(statusCode, upstreamResponse.statusMessage, headers);
 	// 尽快把 SSE 响应头交给本地客户端，后续 body 由 Node 的 HTTP 栈处理 chunked/backpressure。
 	response.flushHeaders();
 	upstreamResponse.on("error", (error) => {
@@ -162,7 +178,7 @@ function writeUpstreamRequestError(response: ServerResponse, error: Error): void
 	writeProxyError(response, error);
 }
 
-function forwardPlainHttp(target: URL, proxy: URL, request: IncomingMessage, response: ServerResponse): void {
+function forwardPlainHttp(target: URL, proxy: URL, request: IncomingMessage, response: ServerResponse, route: ProviderProxyRoute): void {
 	ensureSupportedProxyProtocol(proxy);
 	const headers = buildForwardRequestHeaders(target, request);
 	const agent = new HttpProxyAgent(proxy);
@@ -173,7 +189,7 @@ function forwardPlainHttp(target: URL, proxy: URL, request: IncomingMessage, res
 		path: `${target.pathname}${target.search}`,
 		headers,
 		agent,
-	}, (upstreamResponse) => pipeResponse(upstreamResponse, response));
+	}, (upstreamResponse) => pipeResponse(upstreamResponse, response, route));
 	upstreamRequest.once("close", () => agent.destroy());
 	bindClientAbort(request, response, upstreamRequest);
 	upstreamRequest.on("error", (error) => writeUpstreamRequestError(response, error));
@@ -182,7 +198,7 @@ function forwardPlainHttp(target: URL, proxy: URL, request: IncomingMessage, res
 	upstreamRequest.once("socket", () => request.pipe(upstreamRequest));
 }
 
-function forwardHttps(target: URL, proxy: URL, request: IncomingMessage, response: ServerResponse): void {
+function forwardHttps(target: URL, proxy: URL, request: IncomingMessage, response: ServerResponse, route: ProviderProxyRoute): void {
 	ensureSupportedProxyProtocol(proxy);
 	const headers = buildForwardRequestHeaders(target, request);
 	const agent = new HttpsProxyAgent(proxy);
@@ -193,7 +209,7 @@ function forwardHttps(target: URL, proxy: URL, request: IncomingMessage, respons
 		path: `${target.pathname}${target.search}`,
 		headers,
 		agent,
-	}, (upstreamResponse) => pipeResponse(upstreamResponse, response));
+	}, (upstreamResponse) => pipeResponse(upstreamResponse, response, route));
 	upstreamRequest.once("close", () => agent.destroy());
 	bindClientAbort(request, response, upstreamRequest);
 	upstreamRequest.on("error", (error) => writeUpstreamRequestError(response, error));
@@ -202,13 +218,20 @@ function forwardHttps(target: URL, proxy: URL, request: IncomingMessage, respons
 
 function forwardRequest(route: ProviderProxyRoute, request: IncomingMessage, response: ServerResponse, routePath: string): void {
 	const target = new URL(routePath, route.upstreamOrigin);
+	// [喵喵喵]: 强制校验解析后的 target.origin 严格等于受管的 upstreamOrigin，阻断 SSRF 任意上游转发
+	if (target.origin !== route.upstreamOrigin) {
+		throw new Error(t("拒绝转发：目标 Origin {actual} 与注册路由 {expected} 不一致", {
+			actual: target.origin,
+			expected: route.upstreamOrigin,
+		}));
+	}
 	const proxy = new URL(route.proxyUrl);
 	if (target.protocol === "http:") {
-		forwardPlainHttp(target, proxy, request, response);
+		forwardPlainHttp(target, proxy, request, response, route);
 		return;
 	}
 	if (target.protocol === "https:") {
-		forwardHttps(target, proxy, request, response);
+		forwardHttps(target, proxy, request, response, route);
 		return;
 	}
 	throw new Error(t("不支持的上游协议：{protocol}", { protocol: target.protocol }));
@@ -220,18 +243,27 @@ function handleRequest(request: IncomingMessage, response: ServerResponse): void
 			const localUrl = new URL(request.url ?? "/", "http://127.0.0.1");
 			const [, encodedProviderId, ...rest] = localUrl.pathname.split("/");
 			if (!encodedProviderId) {
-				response.writeHead(404);
+				response.writeHead(404, { "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff" });
 				response.end("missing provider id");
 				return;
 			}
-			const providerId = decodeURIComponent(encodedProviderId);
+			let providerId: string;
+			try {
+				providerId = decodeURIComponent(encodedProviderId);
+			} catch {
+				response.writeHead(400, { "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff" });
+				response.end("malformed provider id");
+				return;
+			}
 			const route = ROUTES.get(providerId);
 			if (!route) {
-				response.writeHead(404);
+				response.writeHead(404, { "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff" });
 				response.end(`unknown provider: ${providerId}`);
 				return;
 			}
-			const path = `/${rest.join("/")}${localUrl.search}`;
+			// [喵喵喵]: 清除多余连续斜杠，防止 //evil.com 协议相对路径逃逸
+			const normalizedRemaining = rest.join("/").replace(/^\/+/, "");
+			const path = `/${normalizedRemaining}${localUrl.search}`;
 			await forwardRequest(route, request, response, path);
 		} catch (error) {
 			writeProxyError(response, error);
@@ -306,11 +338,12 @@ export async function openTemporaryLocalProxyRoute(
 	const upstream = new URL(upstreamUrl);
 	const proxy = parseHttpProxyUrl(proxyUrl);
 	const port = await ensureServerForRoute();
-	const routeId = `${providerId}/model-list/${++temporaryRouteSequence}`;
+	const routeId = `${providerId}/model-list/${randomUUID()}`;
 	const route = { upstreamOrigin: upstream.origin, proxyUrl: proxy.toString() };
 	ROUTES.set(routeId, route);
+	const basePath = trimTrailingSlashes(upstream.pathname || "");
 	return {
-		url: `http://127.0.0.1:${port}/${encodeURIComponent(routeId)}${upstream.pathname}${upstream.search}`,
+		url: `http://127.0.0.1:${port}/${encodeURIComponent(routeId)}${basePath}${upstream.search}`,
 		close(): void {
 			if (ROUTES.get(routeId) === route) ROUTES.delete(routeId);
 		},

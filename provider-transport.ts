@@ -154,7 +154,8 @@ export function createProviderTransport(runtime: ModelRuntime, native: Provider,
 			} else {
 				const route = await openTemporaryLocalProxyRoute(native.id, request.url, proxyUrl);
 				try {
-					response = await fetchImpl(new Request(route.url, request));
+					// [喵喵喵]: 经由本地代理转发时强制禁止自动跟随重定向，防止客户端绕过代理直连上游
+					response = await fetchImpl(new Request(route.url, new Request(request, { redirect: "manual" })));
 				} finally {
 					// [喵喵喵]: 收到响应头时转发端已经取得路由；删除查找项不会中断已建立的 SSE 流。
 					route.close();
