@@ -269,6 +269,7 @@ const ENGLISH_MESSAGES = {
 
 	"{successMessage}，但以下接入未能刷新，已保留上一版 runtime：\n- {warnings}": "{successMessage}, but the following providers could not be refreshed and retain their previous runtime:\n- {warnings}",
 	"已保存请求头 {profileId}": "Saved header profile {profileId}",
+	"请求头 {profileId} 尚未被任何接入使用；在接入编辑器的「请求头」行选择后才会生效。": "Header profile {profileId} is not used by any provider yet; select it in the provider editor's request-header row to take effect.",
 	"已删除请求头 {profileId}": "Deleted header profile {profileId}",
 	"代理地址无效：{url}": "Invalid proxy URL: {url}",
 	"代理地址目前只支持 http:// 或 https:// 代理": "Only http:// or https:// proxies are currently supported",

@@ -11,7 +11,7 @@ import {
 	ModelRuntime,
 	type ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
-import { createRequire } from "node:module";
+import settingsFileLock from "proper-lockfile";
 import { join } from "node:path";
 import { minimatch } from "minimatch";
 import { atomicWriteText } from "./atomic-write.ts";
@@ -278,15 +278,8 @@ function removeEnabledProviderPatterns(patterns: string[], providerId: string): 
 	return patterns.filter((pattern) => !splitThinkingSuffix(pattern).base.toLowerCase().startsWith(providerPrefix));
 }
 
-interface SettingsFileLock {
-	lock(path: string, options: {
-		realpath: false;
-		retries: { retries: number; factor: number; minTimeout: number; maxTimeout: number };
-	}): Promise<() => Promise<void>>;
-}
-
-const require = createRequire(import.meta.url);
-const settingsFileLock = require("proper-lockfile") as SettingsFileLock;
+// [喵喵喵]: Bun 编译版 Pi 下 createRequire 无法寻址 proper-lockfile 的传递依赖 graceful-fs，
+// 必须走 ESM 导入让 Node/Bun 的 ESM 解析器接管 (issue #3)
 
 interface LockedSettingsUpdate {
 	configured: boolean;

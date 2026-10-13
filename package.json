@@ -32,6 +32,7 @@
     "header-profile-mutations.ts",
     "rescue.ts",
     "atomic-write.ts",
+    "proper-lockfile.d.ts",
     "common.ts",
     "config-value-reference.ts",
     "configuration-persistence.ts",

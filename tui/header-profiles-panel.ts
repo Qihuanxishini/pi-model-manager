@@ -270,11 +270,21 @@ async function saveProfile(
 	}
 	try {
 		await saveRequestHeaderProfileConfiguration(pi, ctx, state, draft, oldProfileId);
-		return true;
 	} catch (error) {
 		ctx.ui.notify(t("保存失败：{error}", { error: formatUnknownError(error) }), "error");
 		return false;
 	}
+	// [喵喵喵]: 保存后重新计数——重命名场景下引用已改指向新 ID，用保存前状态会误判 (issue #1)；
+	// 提示属于锦上添花，读取失败不能反向误导成保存失败
+	try {
+		const savedState = await readState();
+		if (countModelsUsingRequestHeaderProfile(savedState, draft.profileId.trim()) === 0) {
+			ctx.ui.notify(t("请求头 {profileId} 尚未被任何接入使用；在接入编辑器的「请求头」行选择后才会生效。", { profileId: draft.profileId.trim() }), "info");
+		}
+	} catch {
+		// 计数提示失败时静默跳过，保存结果不受影响
+	}
+	return true;
 }
 
 async function deleteProfile(pi: ExtensionAPI, ctx: ExtensionCommandContext, profileId: string): Promise<boolean> {
