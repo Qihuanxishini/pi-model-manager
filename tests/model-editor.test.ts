@@ -31,7 +31,7 @@ function createModelDraft(): ModelDraft {
 		inputKinds: ["text", "image"],
 		reasoningMode: "disabled",
 		contextWindow: 200_000,
-		maxTokens: 65_536,
+		maxTokens: 64_000,
 		selectedIndex: 0,
 	};
 }
@@ -57,43 +57,42 @@ test("cycleNumericPreset 上下文窗口按方向键在预设序列中步进并�
 	assert.equal(cycleNumericPreset(800_000, CONTEXT_WINDOW_PRESETS, "left"), 500_000);
 });
 
-test("cycleNumericPreset 输出上限按方向键在二进制整 K 预设中步进", () => {
-	// 预设: [16384, 32768, 65536, 131072]
-	assert.equal(cycleNumericPreset(65_536, MAX_TOKENS_PRESETS, "left"), 32_768);
-	assert.equal(cycleNumericPreset(32_768, MAX_TOKENS_PRESETS, "left"), 16_384);
-	assert.equal(cycleNumericPreset(16_384, MAX_TOKENS_PRESETS, "left"), 16_384, "左边界保持");
+test("cycleNumericPreset 输出上限按方向键在十进制预设中步进", () => {
+	// 预设: [16000, 32000, 64000, 128000]
+	assert.equal(cycleNumericPreset(64_000, MAX_TOKENS_PRESETS, "left"), 32_000);
+	assert.equal(cycleNumericPreset(32_000, MAX_TOKENS_PRESETS, "left"), 16_000);
+	assert.equal(cycleNumericPreset(16_000, MAX_TOKENS_PRESETS, "left"), 16_000, "左边界保持");
 
-	assert.equal(cycleNumericPreset(65_536, MAX_TOKENS_PRESETS, "right"), 131_072);
-	assert.equal(cycleNumericPreset(131_072, MAX_TOKENS_PRESETS, "right"), 131_072, "右边界保持");
+	assert.equal(cycleNumericPreset(64_000, MAX_TOKENS_PRESETS, "right"), 128_000);
+	assert.equal(cycleNumericPreset(128_000, MAX_TOKENS_PRESETS, "right"), 128_000, "右边界保持");
 
-	// 从旧预设 64000 平滑过渡到 65536 或 32768
-	assert.equal(cycleNumericPreset(64_000, MAX_TOKENS_PRESETS, "right"), 65_536);
-	assert.equal(cycleNumericPreset(64_000, MAX_TOKENS_PRESETS, "left"), 32_768);
+	// 从旧二进制预设 65536 平滑吸附到相邻十进制档位
+	assert.equal(cycleNumericPreset(65_536, MAX_TOKENS_PRESETS, "right"), 128_000);
+	assert.equal(cycleNumericPreset(65_536, MAX_TOKENS_PRESETS, "left"), 64_000);
 });
 
-test("parsePositiveIntegerWithUnit 正确解析单位和习惯简写", () => {
-	// contextWindow (十进制)
-	assert.equal(parsePositiveIntegerWithUnit("200k", "contextWindow"), 200_000);
-	assert.equal(parsePositiveIntegerWithUnit("128k", "contextWindow"), 128_000);
-	assert.equal(parsePositiveIntegerWithUnit("1m", "contextWindow"), 1_000_000);
-	assert.equal(parsePositiveIntegerWithUnit("200", "contextWindow"), 200_000, "小于 1000 按 k 习惯换算");
-	assert.equal(parsePositiveIntegerWithUnit("128000", "contextWindow"), 128_000, "完整数字保真");
+test("parsePositiveIntegerWithUnit 正确解析单位和习惯简写（全十进制）", () => {
+	assert.equal(parsePositiveIntegerWithUnit("200k"), 200_000);
+	assert.equal(parsePositiveIntegerWithUnit("128k"), 128_000);
+	assert.equal(parsePositiveIntegerWithUnit("1m"), 1_000_000);
+	assert.equal(parsePositiveIntegerWithUnit("200"), 200_000, "小于 1000 按 k 习惯换算");
+	assert.equal(parsePositiveIntegerWithUnit("128000"), 128_000, "完整数字保真");
 
-	// maxTokens (二进制整 K)
-	assert.equal(parsePositiveIntegerWithUnit("64k", "maxTokens"), 65_536);
-	assert.equal(parsePositiveIntegerWithUnit("16k", "maxTokens"), 16_384);
-	assert.equal(parsePositiveIntegerWithUnit("32k", "maxTokens"), 32_768);
-	assert.equal(parsePositiveIntegerWithUnit("128k", "maxTokens"), 131_072);
-	assert.equal(parsePositiveIntegerWithUnit("64", "maxTokens"), 65_536, "小于 1000 按 1024 进制换算");
-	assert.equal(parsePositiveIntegerWithUnit("16", "maxTokens"), 16_384);
-	assert.equal(parsePositiveIntegerWithUnit("65536", "maxTokens"), 65_536, "完整数字保真");
-	assert.equal(parsePositiveIntegerWithUnit("8192", "maxTokens"), 8192, "大于 1000 完整数字保真");
-	assert.equal(parsePositiveIntegerWithUnit("4096", "maxTokens"), 4096);
+	assert.equal(parsePositiveIntegerWithUnit("64k"), 64_000);
+	assert.equal(parsePositiveIntegerWithUnit("16k"), 16_000);
+	assert.equal(parsePositiveIntegerWithUnit("32k"), 32_000);
+	assert.equal(parsePositiveIntegerWithUnit("128k"), 128_000);
+	assert.equal(parsePositiveIntegerWithUnit("64"), 64_000, "小于 1000 按千倍换算");
+	assert.equal(parsePositiveIntegerWithUnit("16"), 16_000);
+	assert.equal(parsePositiveIntegerWithUnit("64000"), 64_000, "完整数字保真");
+	assert.equal(parsePositiveIntegerWithUnit("8192"), 8192, "大于 1000 完整数字保真");
+	assert.equal(parsePositiveIntegerWithUnit("4096"), 4096);
+	assert.equal(parsePositiveIntegerWithUnit("65536"), 65_536, "旧二进制值不迁移，原样保留");
 
 	// 非法输入返回 undefined
-	assert.equal(parsePositiveIntegerWithUnit("", "contextWindow"), undefined);
-	assert.equal(parsePositiveIntegerWithUnit("abc", "maxTokens"), undefined);
-	assert.equal(parsePositiveIntegerWithUnit("-10", "contextWindow"), undefined);
+	assert.equal(parsePositiveIntegerWithUnit(""), undefined);
+	assert.equal(parsePositiveIntegerWithUnit("abc"), undefined);
+	assert.equal(parsePositiveIntegerWithUnit("-10"), undefined);
 });
 
 test("editModel 支持在上下文窗口与最大输出行用左右键就地步进", async () => {
@@ -124,12 +123,12 @@ test("editModel 支持在上下文窗口与最大输出行用左右键就地步�
 
 	// 初始行: modelId(0), fetch(1), modelName(2), visionInput(3), reasoning(4), contextWindow(5), maxTokens(6)
 	for (let i = 0; i < 5; i++) menu.handleInput(Key.down);
-	assert.match(menu.render(100).join("\n"), /上下文窗口\s+200000/);
+	assert.match(menu.render(100).join("\n"), /上下文窗口\s+← 200000 →/, "adjustable 行渲染方向键标记");
 
 	// 在上下文窗口行按左键 -> 128000
 	menu.handleInput(Key.left);
 	assert.equal(draft.contextWindow, 128_000);
-	assert.match(menu.render(100).join("\n"), /上下文窗口\s+128000/);
+	assert.match(menu.render(100).join("\n"), /上下文窗口\s+← 128000 →/);
 
 	// 按右键 -> 200000 -> 256000
 	menu.handleInput(Key.right);
@@ -139,18 +138,18 @@ test("editModel 支持在上下文窗口与最大输出行用左右键就地步�
 
 	// 移动到最大输出行 (index 6)
 	menu.handleInput(Key.down);
-	assert.match(menu.render(100).join("\n"), /最大输出\s+65536/);
+	assert.match(menu.render(100).join("\n"), /最大输出\s+← 64000 →/);
 
-	// 按左键 -> 32768
+	// 按左键 -> 32000
 	menu.handleInput(Key.left);
-	assert.equal(draft.maxTokens, 32_768);
-	assert.match(menu.render(100).join("\n"), /最大输出\s+32768/);
+	assert.equal(draft.maxTokens, 32_000);
+	assert.match(menu.render(100).join("\n"), /最大输出\s+← 32000 →/);
 
-	// 按右键 -> 65536 -> 131072
+	// 按右键 -> 64000 -> 128000
 	menu.handleInput(Key.right);
-	assert.equal(draft.maxTokens, 65_536);
+	assert.equal(draft.maxTokens, 64_000);
 	menu.handleInput(Key.right);
-	assert.equal(draft.maxTokens, 131_072);
+	assert.equal(draft.maxTokens, 128_000);
 
 	// 保存并退出
 	menu.handleInput(Key.ctrl("s"));

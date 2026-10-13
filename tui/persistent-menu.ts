@@ -79,6 +79,11 @@ export function padLabel(label: string, columns: number): string {
 	return padToVisibleWidth(label, columns);
 }
 
+// [喵喵喵]: 可左右键切换的行值两侧加滑块标记，让能力直接可见
+export function markAdjustableValue(value: string): string {
+	return `← ${value} →`;
+}
+
 function getSearchText(row: MenuRow): string {
 	return (row.searchText ?? `${row.id}\n${row.label}`).toLocaleLowerCase();
 }

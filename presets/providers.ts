@@ -66,7 +66,7 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
 		apiKey: "$GEMINI_API_KEY",
 		authHeader: false,
 		contextWindow: 1048576,
-		maxTokens: 65536,
+		maxTokens: 64000,
 		inputKinds: ["text", "image"],
 		defaultReasoning: true,
 	},

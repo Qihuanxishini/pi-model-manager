@@ -11,7 +11,7 @@ import { t } from "../i18n.ts";
 import type { AnthropicThinkingProtocol, BuiltInClientHeaderProfileId, ModelDraft, ModelListFetchOutcome, ReasoningMode, StoredClientHeaderCapture, StoredRequestHeaderProfile } from "../types.ts";
 import { fetchModelIds } from "./model-list-fetch.ts";
 import { pickModelIdFromList } from "./model-picker.ts";
-import { showOptionPicker, showPersistentFormMenu, padLabel, type MenuCursor, type HorizontalDirection } from "./persistent-menu.ts";
+import { showOptionPicker, showPersistentFormMenu, padLabel, markAdjustableValue, type MenuCursor, type HorizontalDirection } from "./persistent-menu.ts";
 import {
 	describeVisionInput,
 	formatApiShort,
@@ -65,12 +65,12 @@ export const CONTEXT_WINDOW_PRESETS: readonly number[] = [
 	500_000,
 ];
 
-// [喵喵喵]: 输出上限按二进制整 K 幂次 (16k ~ 128k, 即 16384 ~ 131072)
+// [喵喵喵]: 输出上限与上下文统一十进制档位 (16k ~ 128k)；宁小勿大——写小仅封顶略低，写超真实上限会被 API 直接拒绝
 export const MAX_TOKENS_PRESETS: readonly number[] = [
-	16_384,
-	32_768,
-	65_536,
-	131_072,
+	16_000,
+	32_000,
+	64_000,
+	128_000,
 ];
 
 export function cycleNumericPreset(
@@ -91,10 +91,7 @@ export function cycleNumericPreset(
 	return presets[presets.length - 1];
 }
 
-export function parsePositiveIntegerWithUnit(
-	rawInput: string,
-	field: "contextWindow" | "maxTokens",
-): number | undefined {
+export function parsePositiveIntegerWithUnit(rawInput: string): number | undefined {
 	const trimmed = rawInput.trim();
 	if (!trimmed) return undefined;
 
@@ -105,20 +102,11 @@ export function parsePositiveIntegerWithUnit(
 	if (!Number.isFinite(num) || num <= 0) return undefined;
 
 	const unit = match[2]?.toLowerCase();
-	if (unit === "m") {
-		const multiplier = field === "contextWindow" ? 1_000_000 : 1024 * 1024;
-		return Math.round(num * multiplier);
-	}
-	if (unit === "k") {
-		const multiplier = field === "contextWindow" ? 1_000 : 1024;
-		return Math.round(num * multiplier);
-	}
+	if (unit === "m") return Math.round(num * 1_000_000);
+	if (unit === "k") return Math.round(num * 1_000);
 
 	// 纯数字无单位时，若数值小于 1000（如输入 64、128、200），按习惯视作千倍处理
-	if (num < 1000) {
-		const multiplier = field === "contextWindow" ? 1_000 : 1024;
-		return Math.round(num * multiplier);
-	}
+	if (num < 1000) return Math.round(num * 1_000);
 
 	return Math.round(num);
 }
@@ -249,7 +237,7 @@ async function editIntField(ctx: ExtensionCommandContext, draft: ModelDraft, fie
 	if (value === undefined) return;
 	const trimmed = value.trim();
 	if (!trimmed) return;
-	const parsed = parsePositiveIntegerWithUnit(trimmed, field);
+	const parsed = parsePositiveIntegerWithUnit(trimmed);
 	if (parsed === undefined || parsed <= 0) {
 		ctx.ui.notify(t("{label} 必须是正整数", { label }), "warning");
 		return;
@@ -356,7 +344,7 @@ export async function editModel(
 		// [喵喵喵]: 字段行的排版在开关切换后要原样重建，抽成函数避免两处写法飘移。
 		const toMenuRows = (fieldRows: FieldRow[]) => fieldRows.map((row) => ({
 			id: row.id,
-			label: `${padLabel(row.label, 16)}${row.value}`,
+			label: `${padLabel(row.label, 16)}${row.adjustable ? markAdjustableValue(row.value) : row.value}`,
 			adjustable: row.adjustable,
 		}));
 		const rows = buildRows(draft);

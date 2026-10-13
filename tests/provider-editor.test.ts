@@ -53,7 +53,7 @@ test("Chat 接入的协议兼容支持左右键两态切换并显示说明", asy
 	assert.ok(component, "编辑器应同步创建");
 	const menu = component;
 	for (let index = 0; index < 4; index += 1) menu.handleInput(Key.down);
-	assert.match(menu.render(100).join("\n"), /协议兼容\s+标准 · Pi 默认/);
+	assert.match(menu.render(100).join("\n"), /协议兼容\s+← 标准 · Pi 默认 →/);
 	assert.match(menu.render(100).join("\n"), /标准模式：保持 Pi 默认兼容判断。/);
 
 	menu.handleInput(Key.right);
@@ -102,7 +102,7 @@ test("Responses 接入的流结束兼容支持左右键切换并显示说明", a
 	assert.ok(component, "编辑器应同步创建");
 	const menu = component;
 	for (let index = 0; index < 4; index += 1) menu.handleInput(Key.down);
-	assert.match(menu.render(100).join("\n"), /流结束兼容\s+标准 · 等待连接关闭/);
+	assert.match(menu.render(100).join("\n"), /流结束兼容\s+← 标准 · 等待连接关闭 →/);
 	assert.match(menu.render(100).join("\n"), /标准模式：等待上游正常结束流/);
 
 	menu.handleInput(Key.right);

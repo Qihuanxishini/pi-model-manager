@@ -154,7 +154,7 @@ function buildStoredModelFromModelsJson(
 		reasoning: model.reasoning ?? false,
 		input: readModelInput(model),
 		contextWindow: model.contextWindow && model.contextWindow > 0 ? model.contextWindow : 128000,
-		maxTokens: model.maxTokens && model.maxTokens > 0 ? model.maxTokens : 16384,
+		maxTokens: model.maxTokens && model.maxTokens > 0 ? model.maxTokens : 16000,
 		cost: readModelCost(model),
 	};
 	if (explicitApi && explicitApi !== providerApi) stored.api = explicitApi;

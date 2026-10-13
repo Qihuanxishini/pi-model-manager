@@ -14,7 +14,7 @@ import {
 	type OpenAIChatCompatibilityMode,
 	type OpenAIResponsesStreamCompletionMode,
 } from "../types.ts";
-import { showOptionPicker, showPersistentFormMenu, padLabel, type HorizontalDirection, type MenuCursor } from "./persistent-menu.ts";
+import { showOptionPicker, showPersistentFormMenu, padLabel, markAdjustableValue, type HorizontalDirection, type MenuCursor } from "./persistent-menu.ts";
 import {
 	describeProfile,
 	formatApiShort,
@@ -295,7 +295,7 @@ export async function editProvider(
 		// [喵喵喵]: 字段行的排版在开关切换后要原样重建，抽成函数避免两处写法飘移。
 		const toMenuRows = (fieldRows: FieldRow[]) => fieldRows.map((row) => ({
 			id: row.id,
-			label: `${padLabel(row.label, 16)}${row.value}`,
+			label: `${padLabel(row.label, 16)}${row.adjustable ? markAdjustableValue(row.value) : row.value}`,
 			adjustable: row.adjustable,
 		}));
 		const rows = buildRows(draft, requestHeaderProfiles);
