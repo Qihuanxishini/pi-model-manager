@@ -4,7 +4,7 @@
 
 [![Pi](https://img.shields.io/badge/Pi-%3E%3D0.85.1-6f42c1)](https://github.com/earendil-works/pi)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.7-2f81f7.svg)](https://github.com/Qihuanxishini/pi-model-manager)
+[![npm](https://img.shields.io/npm/v/pi-model-manager?color=2f81f7)](https://www.npmjs.com/package/pi-model-manager)
 
 一个面向 [Pi](https://github.com/earendil-works/pi) 的 TUI 模型与接入管理扩展。它以 Pi 原生 `models.json` 为模型配置的唯一权威来源，并提供接入/模型编辑、请求头身份、代理路由和协议兼容配置。
 
@@ -91,7 +91,7 @@ Ctrl+S 保存并启用模型；不切换当前会话模型
   显示名称        默认 = 模型 ID
 ❯ 视觉支持        ◀ 开启 ▶
   Thinking        ◀ 开启 ▶
-  Fast mode       ◀ 关闭 ▶
+  Fast mode       ◀ 标准 ▶
   上下文窗口      ◀ 1050000 ▶
   最大输出        ◀ 128000 ▶
   请求头          跟随接入（Auto→Codex）
@@ -132,7 +132,7 @@ Ctrl+S 保存并启用模型；不切换当前会话模型
 - 从兼容上游拉取模型 ID，也可手动填写模型。
 - 配置上下文窗口、最大输出、视觉支持和 Thinking。
 - 支持 Anthropic Adaptive Thinking 与 Legacy Thinking。
-- 可为 OpenAI Responses 模型启用 `service_tier=priority`（Fast mode）。
+- 为 OpenAI Responses 模型选择标准、Fast（`priority`）或 Ultrafast（`ultrafast`）速度档位。
 - 为每个接入单独配置直连或 HTTP(S) 代理。
 - 提供自动推荐、禁用、Claude Code、Codex 和自定义请求头模式。
 - API key 支持字面值、`$ENV_VAR` / `${ENV_VAR}` 和 Pi 的 `!command` 引用。
@@ -230,8 +230,22 @@ Anthropic 标准端点在写入 `models.json` 时转换为 Pi 原生 SDK 所需�
 - 视觉支持（仅文本或文本 + 图片输入）
 - Thinking 开关
 - Anthropic Adaptive/Legacy Thinking 协议
-- OpenAI Responses Fast mode
+- OpenAI Responses 标准 / Fast / Ultrafast 速度档位
 - Context window 与最大输出 token
+
+#### Responses 速度档位
+
+当 API 协议为 `openai-responses` 时，模型编辑器会显示 **Fast mode**。用 `←` / `→` 循环切换三档，或按 `Enter` 查看完整说明；模型列表也会显示所选档位。英文界面对应 Standard / Fast / Ultrafast。
+
+| 档位 | 请求行为 |
+| --- | --- |
+| 标准 | 默认选项；不主动注入 `service_tier`，沿用上游默认策略 |
+| Fast | 注入 `service_tier: "priority"` |
+| Ultrafast | 注入 `service_tier: "ultrafast"` |
+
+请求中已有显式 `service_tier` 时，扩展不会覆盖。标准档不等于强制发送 `service_tier: "default"`；切换回标准也不会删除调用方显式设置的值。已有 Fast 配置继续保留为 `priority`。
+
+Fast 和 Ultrafast 需要上游、账号及模型支持，可能产生额外费用。扩展只负责请求参数注入，不检测上游最终执行或计费的档位；请以上游响应及账单为准。
 
 ## 请求头模式
 
@@ -259,7 +273,7 @@ Anthropic 标准端点在写入 `models.json` 时转换为 Pi 原生 SDK 所需�
 | 路径 | 用途 |
 | --- | --- |
 | `~/.pi/agent/models.json` | Pi 原生接入与模型定义；模型配置的唯一权威来源 |
-| `~/.pi/agent/extensions/pi-model-manager/state.json` | 请求头选择、自定义请求头、代理开关、Fast mode 和 Anthropic 自定义端点标记等私有元数据 |
+| `~/.pi/agent/extensions/pi-model-manager/state.json` | 请求头选择、自定义请求头、代理开关、Responses 速度档位和 Anthropic 自定义端点标记等私有元数据 |
 
 扩展只会为明确受管理的 Provider 生成请求头、代理路由和动态注册配置。所有权由 `state.json` 的受管理 ID 与 `models.json` Provider 节点中的 `piModelManager.managed` 标记共同确认，防止已删除的 Provider ID 在日后被同名原生配置复用时遭到插件接管。没有这些所有权信息的原生 Provider 保持未管理，其已有 Header 和未知原生字段不会因保存其它配置而被改写；Pi 内置 Provider 不在本扩展中提供编辑或删除入口。
 

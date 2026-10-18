@@ -4,7 +4,7 @@ English · [简体中文](./README.md)
 
 [![Pi](https://img.shields.io/badge/Pi-%3E%3D0.85.1-6f42c1)](https://github.com/earendil-works/pi)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.7-2f81f7.svg)](https://github.com/Qihuanxishini/pi-model-manager)
+[![npm](https://img.shields.io/npm/v/pi-model-manager?color=2f81f7)](https://www.npmjs.com/package/pi-model-manager)
 
 A TUI model and provider manager for [Pi](https://github.com/earendil-works/pi). It keeps Pi's native `models.json` as the single source of truth for model configuration while adding provider/model editing, client-header identities, proxy routing, and protocol compatibility controls.
 
@@ -91,7 +91,7 @@ Ctrl+S 保存并启用模型；不切换当前会话模型
   显示名称        默认 = 模型 ID
 ❯ 视觉支持        ◀ 开启 ▶
   Thinking        ◀ 开启 ▶
-  Fast mode       ◀ 关闭 ▶
+  Fast mode       ◀ 标准 ▶
   上下文窗口      ◀ 1050000 ▶
   最大输出        ◀ 128000 ▶
   请求头          跟随接入（Auto→Codex）
@@ -132,7 +132,7 @@ Ctrl+S 保存并启用模型；不切换当前会话模型
 - Fetch model IDs from compatible upstream APIs or enter them manually.
 - Configure context window, maximum output, vision support, and reasoning support.
 - Choose Anthropic Adaptive Thinking or Legacy Thinking.
-- Enable `service_tier=priority` (Fast mode) per OpenAI Responses model.
+- Select Standard, Fast (`priority`), or Ultrafast (`ultrafast`) service tiers per OpenAI Responses model.
 - Route each provider directly or through its own HTTP(S) proxy.
 - Use recommended, disabled, Claude Code, Codex, or custom client-header profiles.
 - Reference API keys as literals, `$ENV_VAR` / `${ENV_VAR}`, or Pi `!command` values.
@@ -226,8 +226,22 @@ Model capabilities include:
 - Vision support (text only, or text + image input)
 - Reasoning support
 - Anthropic Adaptive/Legacy Thinking
-- OpenAI Responses Fast mode
+- OpenAI Responses Standard / Fast / Ultrafast service tiers
 - Context window and maximum output tokens
+
+### Responses service tiers
+
+For `openai-responses`, the model editor shows **Fast mode**. Cycle through the three tiers with `←` / `→`, or press `Enter` for the full descriptions. The model list also shows the selected tier. The Chinese UI uses 标准 / Fast / Ultrafast.
+
+| Tier | Request behavior |
+| --- | --- |
+| Standard | Default; does not inject `service_tier`, leaving the upstream default policy unchanged |
+| Fast | Injects `service_tier: "priority"` |
+| Ultrafast | Injects `service_tier: "ultrafast"` |
+
+An explicit `service_tier` already present in the request takes precedence and is not overwritten. Standard does not force `service_tier: "default"`; switching back to Standard does not remove a value explicitly set by the caller. Existing Fast settings remain `priority`.
+
+Fast and Ultrafast require support from the upstream service, account, and model, and may incur additional charges. The extension only injects request parameters; it does not detect the tier ultimately served or billed. Refer to the upstream response and billing records.
 
 ## Client-header profiles
 
@@ -255,7 +269,7 @@ Explicit native headers override built-in templates; selecting a custom profile 
 | Path | Purpose |
 | --- | --- |
 | `~/.pi/agent/models.json` | Native Pi provider and model definitions; the single source of truth for model configuration |
-| `~/.pi/agent/extensions/pi-model-manager/state.json` | Private metadata such as header choices, custom profiles, proxy switches, Fast mode, and Anthropic custom endpoint markers |
+| `~/.pi/agent/extensions/pi-model-manager/state.json` | Private metadata such as header choices, custom profiles, proxy switches, Responses service tiers, and Anthropic custom endpoint markers |
 
 The extension generates client headers, proxy routes, and dynamic registrations only for explicitly managed providers. Ownership requires both a managed ID in `state.json` and a `piModelManager.managed` marker on the Provider node in `models.json`; this prevents a deleted Provider ID from silently taking ownership of an unrelated native Provider that later reuses the same ID. Native providers without this ownership evidence remain unmanaged: saving unrelated settings does not rewrite their existing headers or unknown native fields. Built-in Pi providers cannot be edited or deleted through this extension.
 
