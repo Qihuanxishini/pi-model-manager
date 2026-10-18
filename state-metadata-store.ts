@@ -37,7 +37,7 @@ const BUILT_IN_CLIENT_HEADER_PROFILE_IDS = new Set<BuiltInClientHeaderProfileId>
 const RESERVED_REQUEST_HEADER_PROFILE_IDS = new Set(["claude-code", "codex-cli", "claude-code-live", "codex-cli-live"]);
 const INPUT_KINDS = new Set<ModelInputKind>(["text", "image"]);
 const THINKING_LEVELS = new Set(Object.freeze(["off", "minimal", "low", "medium", "high", "xhigh", "max"]));
-const OPENAI_SERVICE_TIERS = new Set<OpenAIServiceTier>(["priority"]);
+const OPENAI_SERVICE_TIERS = new Set<OpenAIServiceTier>(["priority", "ultrafast"]);
 
 interface ProviderMetadata {
 	clientHeaderProfile?: ClientHeaderProfileId;

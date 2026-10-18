@@ -17,6 +17,7 @@ import type {
 	ApiKind,
 	ClientHeaderProfileId,
 	ModelInputKind,
+	OpenAIServiceTier,
 	StoredModel,
 	StoredProvider,
 	StoredRequestHeaderProfile,
@@ -241,6 +242,12 @@ function formatModelThinkingCell(model: StoredModel): string {
 	return model.reasoning ? t("开") : t("关");
 }
 
+export function formatOpenAIServiceTier(tier: OpenAIServiceTier | undefined): string {
+	if (tier === "priority") return "Fast";
+	if (tier === "ultrafast") return "Ultrafast";
+	return t("标准");
+}
+
 interface ModelListCells {
 	modelId: string;
 	name: string;
@@ -289,8 +296,8 @@ function getModelListColumns(
 	const thinking: FixedColumn = { text: cells.thinking, width: 8, color: cells.thinking === t("开") ? "accent" : cells.thinking === t("关") ? "dim" : undefined };
 	const context: FixedColumn = { text: cells.context, width: 7, align: "right" };
 	const output: FixedColumn = { text: cells.output, width: 7, align: "right" };
-	// [喵喵喵]: priority 会消耗 Fast 额度，用 warning 提醒而不是当普通开关。
-	const fast: FixedColumn = { text: cells.fast, width: 8, color: cells.fast === "priority" ? "warning" : cells.fast === "off" ? "dim" : undefined };
+	// [喵喵喵]: priority / ultrafast 都可能额外计费，用 warning 提醒而不是当普通开关。
+	const fast: FixedColumn = { text: cells.fast, width: 8, color: cells.fast === "Fast" || cells.fast === "Ultrafast" ? "warning" : cells.fast === t("标准") ? "dim" : undefined };
 
 	const fullWidth = provider.api === "openai-responses" ? 98 : 88;
 	if (availableWidth >= fullWidth) {
@@ -329,7 +336,7 @@ function getModelListCells(model?: StoredModel): ModelListCells {
 			thinking: formatModelThinkingCell(model),
 			context: formatContextWindow(model.contextWindow),
 			output: formatContextWindow(model.maxTokens),
-			fast: model.openAIServiceTier === "priority" ? "priority" : "off",
+			fast: formatOpenAIServiceTier(model.openAIServiceTier),
 		}
 		: {
 			modelId: t("模型 ID"),

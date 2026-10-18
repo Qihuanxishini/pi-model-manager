@@ -15,6 +15,7 @@ import { showOptionPicker, showPersistentFormMenu, padLabel, markAdjustableValue
 import {
 	describeVisionInput,
 	formatApiShort,
+	formatOpenAIServiceTier,
 	getVisionInputChoices,
 	supportsVisionInput,
 } from "./ui-helpers.ts";
@@ -43,10 +44,6 @@ function describeReasoningMode(mode: ReasoningMode): string {
 
 function describeAnthropicThinkingProtocol(protocol: AnthropicThinkingProtocol): string {
 	return protocol === "adaptive" ? t("开启 · 新版协议") : t("关闭 · Legacy");
-}
-
-function describeOpenAIServiceTier(draft: ModelDraft): string {
-	return draft.openAIServiceTier === "priority" ? t("开启 · priority") : t("关闭");
 }
 
 function getIntegerFieldLabel(field: "contextWindow" | "maxTokens"): string {
@@ -111,7 +108,7 @@ export function parsePositiveIntegerWithUnit(rawInput: string): number | undefin
 	return Math.round(num);
 }
 
-// 开关字段在两个方向上取反；数值字段按 direction 在预设间步进。
+// 开关字段在两个方向上取反；档位字段按 direction 在选项间步进。
 function applyHorizontalToggle(draft: ModelDraft, fieldId: string, direction: HorizontalDirection): boolean {
 	if (fieldId === "visionInput") {
 		draft.inputKinds = supportsVisionInput(draft.inputKinds) ? ["text"] : ["text", "image"];
@@ -126,7 +123,10 @@ function applyHorizontalToggle(draft: ModelDraft, fieldId: string, direction: Ho
 		return true;
 	}
 	if (fieldId === "openAIServiceTier") {
-		draft.openAIServiceTier = draft.openAIServiceTier === "priority" ? undefined : "priority";
+		const tiers: readonly ModelDraft["openAIServiceTier"][] = [undefined, "priority", "ultrafast"];
+		const currentIndex = tiers.indexOf(draft.openAIServiceTier);
+		const step = direction === "left" ? -1 : 1;
+		draft.openAIServiceTier = tiers[(currentIndex + step + tiers.length) % tiers.length];
 		return true;
 	}
 	if (fieldId === "contextWindow") {
@@ -157,7 +157,7 @@ function buildRows(draft: ModelDraft): FieldRow[] {
 		});
 	}
 	if (shouldShowOpenAIServiceTier(draft)) {
-		rows.push({ id: "openAIServiceTier", label: "Fast mode", value: describeOpenAIServiceTier(draft), adjustable: true });
+		rows.push({ id: "openAIServiceTier", label: "Fast mode", value: formatOpenAIServiceTier(draft.openAIServiceTier), adjustable: true });
 	}
 	rows.push(
 		{ id: "contextWindow", label: t("上下文窗口"), value: String(draft.contextWindow), adjustable: true },
@@ -312,10 +312,11 @@ async function editField(
 			ctx,
 			"Fast mode",
 			[
-				{ id: "disabled", tier: undefined, label: t("关闭 — 不发送 service_tier（默认）") },
-				{ id: "priority", tier: "priority", label: t("开启 — service_tier=priority，可能消耗 Fast / priority 额度") },
+				{ id: "default", tier: undefined, label: t("标准 — 不发送 service_tier") },
+				{ id: "priority", tier: "priority", label: t("Fast — service_tier=priority，可能产生额外费用") },
+				{ id: "ultrafast", tier: "ultrafast", label: t("Ultrafast — service_tier=ultrafast，需上游支持且可能产生额外费用") },
 			] as const satisfies readonly { id: string; tier: ModelDraft["openAIServiceTier"]; label: string }[],
-			draft.openAIServiceTier === "priority" ? "priority" : "disabled",
+			draft.openAIServiceTier ?? "default",
 		);
 		if (choice) draft.openAIServiceTier = choice.tier;
 		return;

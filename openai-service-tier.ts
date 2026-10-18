@@ -24,13 +24,15 @@ export function injectOpenAIServiceTier(
 	if (!model || model.api !== "openai-responses") return undefined;
 	if (!isPayloadRecord(payload)) return undefined;
 	if (payload.model !== model.id) return undefined;
+	// [喵喵喵]: 调用方的显式档位保持优先；默认档只是不注入，不强制改写上游策略。
 	if ("service_tier" in payload) return undefined;
 
 	const storedModel = state.providers[model.provider]?.models.find((candidate) => candidate.id === model.id);
-	if (storedModel?.openAIServiceTier !== "priority") return undefined;
+	const tier = storedModel?.openAIServiceTier;
+	if (tier !== "priority" && tier !== "ultrafast") return undefined;
 
 	return {
 		...payload,
-		service_tier: "priority",
+		service_tier: tier,
 	};
 }

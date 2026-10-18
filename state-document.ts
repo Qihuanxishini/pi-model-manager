@@ -424,8 +424,8 @@ export function buildModelFromDraft(
 
 	if (thinkingLevelMap) next.thinkingLevelMap = thinkingLevelMap;
 
-	if (effectiveApi === "openai-responses" && draft.openAIServiceTier === "priority") {
-		next.openAIServiceTier = "priority";
+	if (effectiveApi === "openai-responses" && (draft.openAIServiceTier === "priority" || draft.openAIServiceTier === "ultrafast")) {
+		next.openAIServiceTier = draft.openAIServiceTier;
 	}
 
 	// [喵喵喵]: 仅在启用推理时维护 Adaptive 思考协议；关闭推理时彻底清理兼容标记，避免误剥离协议头

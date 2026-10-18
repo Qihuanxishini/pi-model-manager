@@ -17,7 +17,7 @@ export type OpenAIResponsesStreamCompletionMode = "standard" | "terminal-event";
 export type BuiltInClientHeaderProfileId = "claude-code" | "codex-cli";
 export type ClientHeaderProfileId = "recommended" | "disabled" | BuiltInClientHeaderProfileId | "custom";
 export type CompatSettings = Record<string, unknown>;
-export type OpenAIServiceTier = "priority";
+export type OpenAIServiceTier = "priority" | "ultrafast";
 
 export const DEFAULT_PROVIDER_HTTP_PROXY_URL = "http://127.0.0.1:7890";
 
