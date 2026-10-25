@@ -2,11 +2,14 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
 
 let agentUrl;
 let aiUrl;
+let tuiUrl;
 export async function initialize({ root }) {
 	agentUrl = pathToFileURL(join(root, "dist/bundle/index.js")).href;
+	tuiUrl = pathToFileURL(createRequire(join(root, "package.json")).resolve("@earendil-works/pi-tui")).href;
 	const directory = join(root, "dist/bundle/chunks");
 	for (const name of await readdir(directory)) {
 		if (!name.endsWith(".js")) continue;
@@ -22,5 +25,6 @@ export async function initialize({ root }) {
 export async function resolve(specifier, context, nextResolve) {
 	if (specifier === "@earendil-works/pi-coding-agent") return { url: agentUrl, shortCircuit: true };
 	if (specifier === "@earendil-works/pi-ai") return { url: aiUrl, shortCircuit: true };
+	if (specifier === "@earendil-works/pi-tui") return { url: tuiUrl, shortCircuit: true };
 	return nextResolve(specifier, context);
 }

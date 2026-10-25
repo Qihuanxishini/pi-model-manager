@@ -91,6 +91,8 @@ export interface StoredProvider {
 	httpProxyUrl?: string;
 	/** Responses 终态事件已完整转交后，是否主动结束本地 SSE 流。 */
 	openAIResponsesStreamCompletionMode?: OpenAIResponsesStreamCompletionMode;
+	/** 仅在跨资源或加密状态错误后隔离旧状态并自动重试一次。 */
+	openAIResponsesAutoRecoveryEnabled?: boolean;
 	models: StoredModel[];
 }
 
@@ -113,6 +115,7 @@ export interface ProviderDraft {
 	openAIChatCompatibilityMode?: OpenAIChatCompatibilityMode;
 	/** Responses 流结束模式；terminal-event 不等待上游关闭连接。 */
 	openAIResponsesStreamCompletionMode?: OpenAIResponsesStreamCompletionMode;
+	openAIResponsesAutoRecoveryEnabled?: boolean;
 	baseUrl: string;
 	apiKey: string;
 	authHeader: boolean;

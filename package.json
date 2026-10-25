@@ -18,6 +18,7 @@
     "state-metadata-store.ts",
     "state-cache.ts",
     "state-document.ts",
+    "openai-responses-recovery.ts",
     "openai-responses-payload.ts",
     "openai-service-tier.ts",
     "claude-code-compat.ts",

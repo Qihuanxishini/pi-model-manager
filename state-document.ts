@@ -91,6 +91,7 @@ export function createProviderDraft(api: ApiKind = "openai-responses"): Provider
 		httpProxyEnabled: false,
 		httpProxyUrl: DEFAULT_PROVIDER_HTTP_PROXY_URL,
 		openAIResponsesStreamCompletionMode: "standard",
+		openAIResponsesAutoRecoveryEnabled: false,
 		selectedIndex: 0,
 	};
 }
@@ -112,6 +113,7 @@ export function createProviderDraftFromStored(providerId: string, stored: Stored
 		httpProxyEnabled: stored.httpProxyEnabled ?? false,
 		httpProxyUrl: stored.httpProxyUrl?.trim() || DEFAULT_PROVIDER_HTTP_PROXY_URL,
 		openAIResponsesStreamCompletionMode: stored.openAIResponsesStreamCompletionMode ?? "standard",
+		openAIResponsesAutoRecoveryEnabled: stored.openAIResponsesAutoRecoveryEnabled ?? false,
 		selectedIndex: 0,
 	};
 }
@@ -295,6 +297,10 @@ export function getProviderChangeWarnings(
 		&& (current.openAIResponsesStreamCompletionMode ?? "standard") !== (draft.openAIResponsesStreamCompletionMode ?? "standard")) {
 		changes.push(t("流结束兼容"));
 	}
+	if (draft.api === "openai-responses"
+		&& (current.openAIResponsesAutoRecoveryEnabled ?? false) !== (draft.openAIResponsesAutoRecoveryEnabled ?? false)) {
+		changes.push(t("跨资源自动恢复"));
+	}
 	if ((current.clientHeaderProfile ?? "recommended") !== draft.clientHeaderProfile
 		|| (current.requestHeaderProfileId ?? "") !== (draft.requestHeaderProfileId ?? ""))
 		changes.push(t("请求头"));
@@ -374,6 +380,11 @@ function buildProviderFromDraft(
 		next.openAIResponsesStreamCompletionMode = "terminal-event";
 	} else {
 		delete next.openAIResponsesStreamCompletionMode;
+	}
+	if (draft.api === "openai-responses" && draft.openAIResponsesAutoRecoveryEnabled) {
+		next.openAIResponsesAutoRecoveryEnabled = true;
+	} else {
+		delete next.openAIResponsesAutoRecoveryEnabled;
 	}
 	if (draft.clientHeaderProfile === "custom" && draft.requestHeaderProfileId?.trim()) {
 		next.requestHeaderProfileId = draft.requestHeaderProfileId.trim();

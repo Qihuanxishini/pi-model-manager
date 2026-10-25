@@ -112,6 +112,12 @@ function buildRows(
 			value: describeOpenAIResponsesStreamCompletionMode(getOpenAIResponsesStreamCompletionMode(draft)),
 			adjustable: true,
 		});
+		rows.push({
+			id: "openAIResponsesAutoRecoveryEnabled",
+			label: t("跨资源自动恢复"),
+			value: draft.openAIResponsesAutoRecoveryEnabled ? t("开启") : t("关闭"),
+			adjustable: true,
+		});
 	}
 	rows.push(
 		{ id: "httpProxyEnabled", label: t("本机代理"), value: draft.httpProxyEnabled ? t("开启") : t("关闭"), adjustable: true },
@@ -133,6 +139,10 @@ function applyHorizontalToggle(draft: ProviderDraft, fieldId: string, direction:
 	}
 	if (fieldId === "openAIResponsesStreamCompletionMode") {
 		draft.openAIResponsesStreamCompletionMode = cycleOpenAIResponsesStreamCompletionMode(getOpenAIResponsesStreamCompletionMode(draft), direction);
+		return true;
+	}
+	if (fieldId === "openAIResponsesAutoRecoveryEnabled") {
+		draft.openAIResponsesAutoRecoveryEnabled = !draft.openAIResponsesAutoRecoveryEnabled;
 		return true;
 	}
 	if (fieldId !== "httpProxyEnabled") return false;
@@ -204,6 +214,19 @@ async function editField(
 			getOpenAIResponsesStreamCompletionMode(draft),
 		);
 		if (choice) draft.openAIResponsesStreamCompletionMode = choice.id as OpenAIResponsesStreamCompletionMode;
+		return;
+	}
+	if (fieldId === "openAIResponsesAutoRecoveryEnabled") {
+		const choice = await showOptionPicker(
+			ctx,
+			t("跨资源自动恢复"),
+			[
+				{ id: "disabled", label: t("关闭 — 不检测或自动恢复跨资源状态错误") },
+				{ id: "enabled", label: t("开启 — 仅在指定错误后隔离旧状态并重试一次，逐次提示") },
+			],
+			draft.openAIResponsesAutoRecoveryEnabled ? "enabled" : "disabled",
+		);
+		if (choice) draft.openAIResponsesAutoRecoveryEnabled = choice.id === "enabled";
 		return;
 	}
 	if (fieldId === "authHeader") {
@@ -311,6 +334,9 @@ export async function editProvider(
 			}
 			if (draft.api === "openai-responses") {
 				summaryLines.push(getOpenAIResponsesStreamCompletionModeHint(getOpenAIResponsesStreamCompletionMode(draft)));
+				summaryLines.push(draft.openAIResponsesAutoRecoveryEnabled
+					? t("跨资源自动恢复已开启：仅在指定错误后重试一次；隔离旧状态，保留新推理，每次提示结果。")
+					: t("跨资源自动恢复已关闭：不检测或自动处理资源归属与加密状态错误。"));
 			}
 			return summaryLines;
 		};

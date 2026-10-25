@@ -3,11 +3,12 @@
 // 统一协调 before_provider_request payload transform。每个请求内共享一次
 // StateDocument；跨请求由 state-cache.ts 按配置文件签名复用状态。
 
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentBeforeSettleEvent, BoundaryResult, ExtensionContext, TurnEndEvent } from "@earendil-works/pi-coding-agent";
 import { injectClaudeCodeMetadata } from "./claude-code-compat.ts";
 import { formatUnknownError } from "./common.ts";
 import { t, type MessageKey } from "./i18n.ts";
 import { normalizeManagedOpenAIResponsesPayload } from "./openai-responses-payload.ts";
+import { createOpenAIResponsesRecovery } from "./openai-responses-recovery.ts";
 import { injectOpenAIServiceTier } from "./openai-service-tier.ts";
 import { readCachedState } from "./state-cache.ts";
 import type { StateDocument } from "./types.ts";
@@ -49,12 +50,36 @@ const REQUEST_TRANSFORMS: RequestTransform[] = [
 
 export interface RequestPipeline {
 	transform(payload: unknown, ctx: ExtensionContext): Promise<unknown | undefined>;
+	beginActivity(): void;
+	recover(event: AgentBeforeSettleEvent, ctx: ExtensionContext): Promise<BoundaryResult | undefined>;
+	observeResult(event: TurnEndEvent, ctx: ExtensionContext): void;
+	finishActivity(aborted: boolean, ctx: ExtensionContext): void;
 }
 
 export function createRequestPipeline(): RequestPipeline {
 	const notifiedTransformErrors = new Set<string>();
+	const recovery = createOpenAIResponsesRecovery();
+	const transforms: RequestTransform[] = [
+		...REQUEST_TRANSFORMS,
+		{
+			id: "openai-responses-recovery",
+			warning: "跨资源恢复状态处理失败，本次请求未执行自动恢复",
+			run: recovery.transform,
+		},
+	];
 
 	return {
+		beginActivity: recovery.beginActivity,
+		observeResult: recovery.observeResult,
+		finishActivity: recovery.finishActivity,
+		async recover(event, ctx) {
+			try {
+				return await recovery.recover(event, ctx);
+			} catch {
+				if (ctx.hasUI) ctx.ui.notify(`[pi-model-manager] ${t("跨资源自动恢复准备失败，未自动重试")}`, "warning");
+				return undefined;
+			}
+		},
 		async transform(initialPayload, ctx) {
 			let payload = initialPayload;
 			let changed = false;
@@ -73,7 +98,7 @@ export function createRequestPipeline(): RequestPipeline {
 			const storedModel = provider?.models.find((model) => model.id === ctx.model!.id);
 			if (!provider?.managed || !storedModel || (storedModel.api ?? provider.api) !== ctx.model.api) return undefined;
 
-			for (const transform of REQUEST_TRANSFORMS) {
+			for (const transform of transforms) {
 				try {
 					const nextPayload = await transform.run(payload, ctx, state);
 					if (nextPayload !== undefined) {

@@ -46,6 +46,7 @@ interface ProviderMetadata {
 	httpProxyEnabled?: boolean;
 	httpProxyUrl?: string;
 	openAIResponsesStreamCompletionMode?: OpenAIResponsesStreamCompletionMode;
+	openAIResponsesAutoRecoveryEnabled?: boolean;
 	anthropicApiRoot?: boolean;
 }
 
@@ -256,6 +257,8 @@ function readProviderMetadata(raw: unknown, path: string): ProviderMetadata {
 	if (httpProxyUrl !== undefined) metadata.httpProxyUrl = httpProxyUrl;
 	const streamCompletionMode = readOptionalOpenAIResponsesStreamCompletionMode(raw, "openAIResponsesStreamCompletionMode", path);
 	if (streamCompletionMode !== undefined) metadata.openAIResponsesStreamCompletionMode = streamCompletionMode;
+	const autoRecoveryEnabled = readOptionalBoolean(raw, "openAIResponsesAutoRecoveryEnabled", path);
+	if (autoRecoveryEnabled !== undefined) metadata.openAIResponsesAutoRecoveryEnabled = autoRecoveryEnabled;
 	return metadata;
 }
 
@@ -327,6 +330,8 @@ function readStoredProvider(raw: unknown, path: string, managed: boolean): Store
 	if (httpProxyUrl !== undefined) provider.httpProxyUrl = httpProxyUrl;
 	const streamCompletionMode = readOptionalOpenAIResponsesStreamCompletionMode(raw, "openAIResponsesStreamCompletionMode", path);
 	if (streamCompletionMode !== undefined) provider.openAIResponsesStreamCompletionMode = streamCompletionMode;
+	const autoRecoveryEnabled = readOptionalBoolean(raw, "openAIResponsesAutoRecoveryEnabled", path);
+	if (autoRecoveryEnabled !== undefined) provider.openAIResponsesAutoRecoveryEnabled = autoRecoveryEnabled;
 	return provider;
 }
 
@@ -403,6 +408,7 @@ function extractProviderMetadata(provider: StoredProvider): ProviderMetadata {
 	if (provider.openAIResponsesStreamCompletionMode === "terminal-event") {
 		metadata.openAIResponsesStreamCompletionMode = "terminal-event";
 	}
+	if (provider.openAIResponsesAutoRecoveryEnabled) metadata.openAIResponsesAutoRecoveryEnabled = true;
 	return metadata;
 }
 

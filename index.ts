@@ -62,6 +62,7 @@ export default async function modelManagerExtension(pi: ExtensionAPI): Promise<v
 	const requestPipeline = createRequestPipeline();
 	pi.on("session_start", async (event, ctx) => {
 		resetClaudeCodeMetadataSession();
+		requestPipeline.beginActivity();
 		const transportErrors: string[] = [];
 		let migratedBaseUrlProviderIds: string[] = [];
 		try {
@@ -115,6 +116,10 @@ export default async function modelManagerExtension(pi: ExtensionAPI): Promise<v
 	});
 
 	pi.on("before_provider_request", async (event, ctx) => requestPipeline.transform(event.payload, ctx));
+	pi.on("before_agent_start", () => requestPipeline.beginActivity());
+	pi.on("agent_before_settle", (event, ctx) => requestPipeline.recover(event, ctx));
+	pi.on("turn_end", (event, ctx) => requestPipeline.observeResult(event, ctx));
+	pi.on("agent_settled", (event, ctx) => requestPipeline.finishActivity(event.aborted, ctx));
 	pi.on("session_shutdown", async () => {
 		await closeLocalProxyServer();
 	});

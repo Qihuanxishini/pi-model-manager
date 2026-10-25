@@ -250,6 +250,9 @@ async function buildStoredProviderFromModelsJson(
 	if (managed && providerMetadata?.openAIResponsesStreamCompletionMode !== undefined) {
 		provider.openAIResponsesStreamCompletionMode = providerMetadata.openAIResponsesStreamCompletionMode;
 	}
+	if (managed && providerMetadata?.openAIResponsesAutoRecoveryEnabled !== undefined) {
+		provider.openAIResponsesAutoRecoveryEnabled = providerMetadata.openAIResponsesAutoRecoveryEnabled;
+	}
 	return provider;
 }
 
