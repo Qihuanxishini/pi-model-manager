@@ -19,7 +19,8 @@ let currentClaudeCodeUserId = createClaudeCodeUserId();
 function createClaudeCodeUserId(): string {
 	const sessionId = randomUUID();
 	const hash = createHash("sha256").update(`anthropic_user_${sessionId}`).digest("hex");
-	return `user_${hash}_account__session_${sessionId}`;
+	// [喵喵喵]: 当前客户端将身份序列化为 JSON 字符串；仅生成匿名标识，不采集真实账户信息 (2026-10-25)。
+	return JSON.stringify({ device_id: hash, account_uuid: "", session_id: sessionId });
 }
 
 export function resetClaudeCodeMetadataSession(): void {
@@ -28,6 +29,21 @@ export function resetClaudeCodeMetadataSession(): void {
 
 function isPayloadRecord(payload: unknown): payload is PayloadRecord {
 	return isObjectRecord(payload);
+}
+
+/** 从实际 payload 的身份信息提取可安全放入请求头的会话 UUID。 */
+export function getClaudeCodeSessionId(payload: unknown): string | undefined {
+	if (!isPayloadRecord(payload) || !isObjectRecord(payload.metadata)) return undefined;
+	if (typeof payload.metadata.user_id !== "string") return undefined;
+	try {
+		const identity: unknown = JSON.parse(payload.metadata.user_id);
+		if (!isObjectRecord(identity) || typeof identity.session_id !== "string") return undefined;
+		return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(identity.session_id)
+			? identity.session_id
+			: undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 export function injectClaudeCodeMetadata(

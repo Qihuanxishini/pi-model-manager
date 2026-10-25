@@ -77,6 +77,15 @@ test(`真实 Pi${magicEntry ? " + Magic Context" : ""}：400 后恢复，下一�
 			assert.equal(new URL(request.url).hostname, "recovery.invalid", "测试禁止真实外网请求");
 			requests.push(await request.json());
 			if (requests.length === 1) return new Response(JSON.stringify({ error: { message: "The requested item was created under a different Azure OpenAI resource. Use the same resource that created the item to access it.", type: "invalid_request_error" } }), { status: 400, headers: { "content-type": "application/json" } });
+			// [喵喵喵]: mock 必须拒绝本次缺陷产生的缺字段项，不能无条件接受恢复请求。
+			for (const item of requests.at(-1).input) {
+				if (item.type === "reasoning") assert.equal(typeof item.id, "string", "reasoning 必须保留合法 id");
+				if (item.type === "message" && Array.isArray(item.content)
+					&& item.content.some((part: any) => part.type === "output_text" || part.type === "refusal")) {
+					assert.equal(typeof item.id, "string", "output message 必须有 id");
+					assert.equal(item.status, "completed");
+				}
+			}
 			return new Response(sse(requests.length), { headers: { "content-type": "text/event-stream" } });
 		};
 		const settingsManager = SettingsManager.inMemory({ retry: { enabled: false }, compaction: { enabled: false } });
@@ -129,6 +138,7 @@ test(`真实 Pi${magicEntry ? " + Magic Context" : ""}：400 后恢复，下一�
 		assert.equal(session.getLastAssistantText(), "recovered");
 		assert.equal(requests[0].input.find((item: any) => item.id === "rs_old").encrypted_content, "cipher-old");
 		assert.equal(requests[1].input.some((item: any) => item.id === "rs_old" || item.id === "msg_old" || item.encrypted_content === "cipher-old"), false);
+		assert.ok(requests[1].input.some((item: any) => item.role === "assistant" && item.content === "old summary"), "旧摘要必须以合法普通消息保留");
 		assert.equal(manager.getBranch().filter((entry: any) => entry.type === "custom" && entry.customType === "pi-model-manager:responses-state-recovery").length, 1);
 		assert.equal(notifications.filter((message) => /自动恢复成功/.test(message)).length, 1);
 		assert.ok(manager.getBranch().some((entry: any) => entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason === "error"), "原始失败历史仍保留");

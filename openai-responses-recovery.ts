@@ -72,6 +72,21 @@ function collectState(payload: Record<string, unknown>, scope: string): ReplaySt
 	};
 }
 
+function canReplayItem(item: unknown): boolean {
+	if (!isObjectRecord(item)) return true;
+	switch (item.type) {
+		case "item_reference":
+		case "compaction": return false;
+		case "reasoning":
+		case "message":
+		case "function_call":
+		case "function_call_output": return true;
+		default:
+			// [喵喵喵]: 未知资源项的 id 可能是必填或依赖服务端状态，不能套用工具调用的剥离规则。
+			return typeof item.id !== "string" && !Object.keys(item).some((key) => key.startsWith("encrypted"));
+	}
+}
+
 function stripQuarantinedState(
 	payload: Record<string, unknown>,
 	ctx: ExtensionContext,
@@ -91,17 +106,29 @@ function stripQuarantinedState(
 	if (!itemIds.size && !encryptedHashes.size && !previousResponseIds.size) return undefined;
 
 	let changed = false;
-	const input = (payload.input as unknown[]).map((item) => {
-		if (!isObjectRecord(item)) return item;
+	const input = (payload.input as unknown[]).flatMap((item) => {
+		if (!isObjectRecord(item)) return [item];
 		const encryptedKeys = Object.keys(item).filter((key) => key.startsWith("encrypted"));
 		const quarantined = (typeof item.id === "string" && itemIds.has(item.id))
 			|| encryptedKeys.some((key) => item[key] !== undefined && encryptedHashes.has(digest([key, item[key]])));
-		if (!quarantined) return item;
-		const next = { ...item };
-		delete next.id;
-		for (const key of encryptedKeys) delete next[key];
+		if (!quarantined) return [item];
 		changed = true;
-		return next;
+		if (item.type === "reasoning") {
+			// [喵喵喵]: 失效密文不能伪造新的 reasoning id；按 Pi 的摘要优先规则回放可读文本，不生成缺字段的 reasoning。
+			const text = [item.summary, item.content].map((blocks) => Array.isArray(blocks)
+				? blocks.filter(isObjectRecord).map((block) => typeof block.text === "string" ? block.text : "").filter(Boolean).join("\n\n")
+				: "").find(Boolean);
+			return text ? [{ type: "message", role: "assistant", content: text }] : [];
+		}
+		const next = { ...item };
+		for (const key of encryptedKeys) delete next[key];
+		if (item.type === "message" && item.role === "assistant") {
+			// [喵喵喵]: output message 仍需 id；沿用 Pi 的本地占位 ID 方式，保留正文、拒答、状态与 phase。
+			next.id = `msg_pi_recovery_${digest(item).slice(0, 32)}`;
+		} else {
+			delete next.id;
+		}
+		return [next];
 	});
 	const dropPrevious = typeof payload.previous_response_id === "string" && previousResponseIds.has(payload.previous_response_id);
 	if (!changed && !dropPrevious) return undefined;
@@ -113,7 +140,7 @@ function stripQuarantinedState(
 function isRecoverableError(message: string): boolean {
 	return /created under a different Azure OpenAI resource/i.test(message)
 		|| /\binvalid_encrypted_content\b/i.test(message)
-		|| /encrypted content (?:could not be verified|could not be decrypted)/i.test(message);
+		|| /\bencrypted content(?:\s+\S+)?(?:\s+for item\s+\S+)?\s+could not be (?:verified|decrypted)\b/i.test(message);
 }
 
 function notify(ctx: ExtensionContext, key: MessageKey, snapshot: RequestSnapshot, warning = false): void {
@@ -136,8 +163,8 @@ export function createOpenAIResponsesRecovery() {
 			lastRequest = undefined;
 			const model = enabledModel(ctx, state);
 			if (!model || !isObjectRecord(payload) || payload.model !== model.id || !Array.isArray(payload.input)) return undefined;
-			// [喵喵喵]: 服务端引用或压缩项无法仅靠剥离重建；不把不完整历史误当成可安全恢复的完整回放。
-			if (payload.input.some((item) => isObjectRecord(item) && (item.type === "item_reference" || item.type === "compaction"))) return undefined;
+			// [喵喵喵]: 服务端引用、压缩项及未知资源项无法安全重建，不把不完整历史误当成完整回放。
+			if (!payload.input.every(canReplayItem)) return undefined;
 			const scope = scopeFor(model);
 			const transformed = stripQuarantinedState(payload, ctx, scope);
 			lastRequest = {

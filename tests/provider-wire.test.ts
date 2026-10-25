@@ -4,6 +4,7 @@ import { once } from "node:events";
 import test from "node:test";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { reconcileProvider, unregisterManagedProvider } from "../provider-registrar.ts";
+import { injectClaudeCodeMetadata, resetClaudeCodeMetadataSession } from "../claude-code-compat.ts";
 import { closeLocalProxyServer } from "../local-proxy-service.ts";
 import type { ApiKind, StoredProvider } from "../types.ts";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -52,6 +53,42 @@ function provider(api: ApiKind, baseUrl: string): StoredProvider {
 		models: [{ id: ids[api], reasoning: true, input: ["text"], contextWindow: 128000, maxTokens: 12000, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, ...(api === "anthropic-messages" ? { compat: { forceAdaptiveThinking: true } } : {}) }],
 	};
 }
+
+test("真实 Pi：ClaudeCode 会话头与实际 JSON metadata 一致，不受发送前会话重置影响", { skip: !realRuntime, timeout: 15_000 }, async () => {
+	const config = { ...provider("anthropic-messages", "http://gateway.invalid/v1"), clientHeaderProfile: "claude-code" as const };
+	const state = { version: 2 as const, providers: { "session-wire": config }, managedProviderIds: ["session-wire"], requestHeaderProfiles: {}, clientHeaderCaptures: {} };
+	const runtime = await ModelRuntime.create({ credentials: emptyCredentials, modelsPath: null, refreshOnCreate: false, allowModelNetwork: false });
+	const pi = { registerProvider: (native: any) => runtime.registerNativeProvider(native), unregisterProvider: (id: string) => runtime.unregisterProvider(id) } as any;
+	const originalFetch = globalThis.fetch;
+	let captured: Request | undefined;
+	globalThis.fetch = async (input, init) => {
+		captured = new Request(input, init);
+		return new Response(sse("anthropic-messages"), { headers: { "content-type": "text/event-stream" } });
+	};
+	try {
+		await reconcileProvider(pi, "session-wire", config);
+		const model = runtime.getModel("session-wire", config.models[0]!.id)!;
+		const result = await runtime.streamSimple(model, context as any, {
+			onPayload(payload) {
+				const transformed = injectClaudeCodeMetadata(payload, model, state);
+				resetClaudeCodeMetadataSession();
+				return transformed;
+			},
+		}).result();
+		assert.equal(result.stopReason, "stop", result.errorMessage);
+		assert.ok(captured);
+		const body = await captured.json();
+		const identity = JSON.parse(body.metadata.user_id);
+		assert.deepEqual(Object.keys(identity).sort(), ["account_uuid", "device_id", "session_id"]);
+		assert.match(identity.device_id, /^[0-9a-f]{64}$/);
+		assert.equal(identity.account_uuid, "");
+		assert.match(identity.session_id, /^[0-9a-f-]{36}$/);
+		assert.equal(captured.headers.get("x-claude-code-session-id"), identity.session_id);
+	} finally {
+		globalThis.fetch = originalFetch;
+		unregisterManagedProvider(pi, "session-wire");
+	}
+});
 
 test("真实 Pi：四协议代理前后端点、业务头、payload 和 SSE 结果一致", { skip: !realRuntime, timeout: 30_000 }, async () => {
 	const captured: { url: string; headers: Record<string, unknown>; body: unknown }[] = [];

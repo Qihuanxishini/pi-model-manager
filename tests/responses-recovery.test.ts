@@ -45,11 +45,13 @@ function payload() {
 		include: ["reasoning.encrypted_content"], previous_response_id: "resp_old",
 		input: [
 			{ role: "user", content: "keep user text" },
-			{ type: "reasoning", id: "rs_old", summary: [{ type: "summary_text", text: "keep summary" }], encrypted_content: "cipher-old" },
-			{ type: "message", role: "assistant", id: "msg_old", content: [{ type: "output_text", text: "keep reply" }] },
+			{ type: "reasoning", id: "rs_old", summary: [{ type: "summary_text", text: "keep summary" }], content: [{ type: "reasoning_text", text: "prefer summary" }], encrypted_content: "cipher-old" },
+			{ type: "message", role: "assistant", id: "msg_old", status: "completed", phase: "commentary", content: [{ type: "output_text", text: "keep reply", annotations: [] }, { type: "refusal", refusal: "keep refusal" }] },
 			{ type: "function_call", id: "fc_old", call_id: "call_keep", name: "lookup", arguments: '{"id":"business-id","encrypted_content":"business-value"}' },
 			{ type: "function_call_output", call_id: "call_keep", output: "keep result" },
-			{ type: "message", role: "assistant", id: "msg_pi_0", content: [{ type: "output_text", text: "local fallback" }] },
+			{ type: "message", role: "assistant", id: "msg_pi_0", status: "completed", content: [{ type: "output_text", text: "local fallback", annotations: [] }] },
+			{ type: "reasoning", id: "rs_empty", summary: [], encrypted_content: "cipher-empty" },
+			{ type: "reasoning", id: "rs_content", summary: [], content: [{ type: "reasoning_text", text: "keep readable reasoning" }], encrypted_content: "cipher-content" },
 		],
 	};
 }
@@ -95,8 +97,12 @@ test("恢复状态只隔离旧字段，不修改原始 payload、call_id、工�
 	commit(h, result);
 	const transformed = await h.pipeline.transform(original, h.ctx) as any;
 	assert.equal(transformed.previous_response_id, undefined);
-	assert.deepEqual(transformed.input[1], { type: "reasoning", summary: original.input[1]!.summary });
-	assert.equal(transformed.input[2].id, undefined);
+	assert.deepEqual(transformed.input[1], { type: "message", role: "assistant", content: "keep summary" });
+	assert.match(transformed.input[2].id, /^msg_pi_recovery_[a-f0-9]{32}$/);
+	assert.deepEqual(transformed.input[2], { ...original.input[2], id: transformed.input[2].id });
+	assert.deepEqual(transformed.input.at(-1), { type: "message", role: "assistant", content: "keep readable reasoning" });
+	assert.equal(transformed.input.some((item: any) => item.type === "reasoning"), false);
+	assert.equal(transformed.input.length, original.input.length - 1, "没有可读内容的旧 reasoning 不回放");
 	assert.equal(transformed.input[3].id, undefined);
 	assert.equal(transformed.input[3].call_id, "call_keep");
 	assert.equal(transformed.input[3].arguments, original.input[3]!.arguments);
@@ -127,11 +133,20 @@ test("关闭或普通 400 不读取目标错误；只接受指定状态错误，
 	assert.deepEqual(disabled.notifications, []);
 	await seed();
 	const h = harness();
-	for (const error of ["400 invalid request", "401 unauthorized", "429 rate limited", "500 upstream error"]) {
+	for (const error of ["400 invalid request", "401 unauthorized", "429 rate limited", "500 upstream error",
+		'400 {"message":"Upstream rejected the request as invalid","type":"invalid_request_error"}',
+		"400 encrypted content quota exceeded"]) {
 		await h.pipeline.transform(payload(), h.ctx);
 		assert.equal(await h.pipeline.recover(failed(error), h.ctx), undefined);
 	}
-	for (const error of ["400 encrypted content could not be verified", "invalid_encrypted_content"]) {
+	const recoverableErrors = [
+		"400 encrypted content could not be verified", "invalid_encrypted_content",
+		"The encrypted content gAAA...ng== could not be verified.",
+		"The encrypted content 'gAAA...==' could not be decrypted.",
+		"The encrypted content for item rs_old could not be verified.",
+		"The encrypted content gAAA...== for item rs_old could not be decrypted.",
+	];
+	for (const error of recoverableErrors) {
 		h.pipeline.beginActivity();
 		await h.pipeline.transform(payload(), h.ctx);
 		assert.equal((await h.pipeline.recover(failed(error), h.ctx))?.continue, true);
@@ -139,7 +154,7 @@ test("关闭或普通 400 不读取目标错误；只接受指定状态错误，
 		assert.match(h.notifications.at(-1)!.message, /重试失败/);
 		assert.equal(await h.pipeline.recover(failed(error), h.ctx), undefined);
 	}
-	assert.equal(h.notifications.filter((item) => /重试失败/.test(item.message)).length, 2);
+	assert.equal(h.notifications.filter((item) => /重试失败/.test(item.message)).length, recoverableErrors.length);
 	h.pipeline.beginActivity();
 	await h.pipeline.transform(payload(), h.ctx);
 	await seed(false);
@@ -153,8 +168,11 @@ test("已产生部分输出、服务端引用和无可隔离状态的请求不�
 	const partial = failed();
 	partial.context.contextEntries[0].messages[0].content = [{ type: "text", text: "partial response" }];
 	assert.equal(await h.pipeline.recover(partial, h.ctx), undefined);
-	await h.pipeline.transform({ ...payload(), input: [{ type: "item_reference", id: "ref_old" }] }, h.ctx);
-	assert.equal(await h.pipeline.recover(failed(), h.ctx), undefined);
+	for (const item of [{ type: "item_reference", id: "ref_old" }, { type: "compaction", encrypted_content: "opaque" },
+		{ type: "web_search_call", id: "ws_old", status: "completed" }]) {
+		await h.pipeline.transform({ ...payload(), input: [item] }, h.ctx);
+		assert.equal(await h.pipeline.recover(failed(), h.ctx), undefined);
+	}
 	await h.pipeline.transform({ ...payload(), previous_response_id: undefined, input: [{ role: "user", content: "hello" }] }, h.ctx);
 	assert.equal(await h.pipeline.recover(failed(), h.ctx), undefined);
 	await h.pipeline.transform(payload(), h.ctx);
