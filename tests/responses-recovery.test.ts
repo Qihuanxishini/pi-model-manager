@@ -79,7 +79,7 @@ function response(stopReason = "stop") {
 	return { message: { role: "assistant", provider: "gateway", model: "gpt-5.2", api: "openai-responses", stopReason } } as any;
 }
 
-test("恢复状态只隔离旧字段，不修改原始 payload、call_id、工具参数或后续新密文；记录可重载且按分支和模型隔离", async () => {
+test("报错前不改写，报错后仅剥离旧 item ID，完整保留思维链、密文及工具配对；记录可重载且按分支和模型隔离", async () => {
 	await seed();
 	const h = harness();
 	const original = payload();
@@ -93,20 +93,12 @@ test("恢复状态只隔离旧字段，不修改原始 payload、call_id、工�
 	assert.deepEqual(boundary.entries, [previousEntry], "不能原地改写宿主传入的提案列表");
 	assert.equal(result?.continue, true, "错误 assistant 尚未省略时 canContinue=false 不能阻止恢复");
 	assert.deepEqual(result?.entries?.at(-1), { type: "context_edit", targetId: "failed-entry", replacement: null });
-	assert.equal(JSON.stringify(result).includes("cipher-old"), false, "持久化隔离记录不保存密文");
+	assert.equal(JSON.stringify(result).includes("cipher-old"), false, "持久化恢复记录不保存密文");
 	commit(h, result);
 	const transformed = await h.pipeline.transform(original, h.ctx) as any;
-	assert.equal(transformed.previous_response_id, undefined);
-	assert.deepEqual(transformed.input[1], { type: "message", role: "assistant", content: "keep summary" });
-	assert.match(transformed.input[2].id, /^msg_pi_recovery_[a-f0-9]{32}$/);
-	assert.deepEqual(transformed.input[2], { ...original.input[2], id: transformed.input[2].id });
-	assert.deepEqual(transformed.input.at(-1), { type: "message", role: "assistant", content: "keep readable reasoning" });
-	assert.equal(transformed.input.some((item: any) => item.type === "reasoning"), false);
-	assert.equal(transformed.input.length, original.input.length - 1, "没有可读内容的旧 reasoning 不回放");
-	assert.equal(transformed.input[3].id, undefined);
-	assert.equal(transformed.input[3].call_id, "call_keep");
-	assert.equal(transformed.input[3].arguments, original.input[3]!.arguments);
-	assert.deepEqual(transformed.input[4], original.input[4]);
+	const expectedInput = structuredClone(original.input);
+	for (const index of [1, 2, 3, 6, 7]) delete expectedInput[index]!.id;
+	assert.deepEqual(transformed, { ...original, input: expectedInput }, "请求仅剥离旧服务端 item ID，不改变推理、密文、引用、正文或工具配对");
 	assert.equal(transformed.input[5].id, "msg_pi_0", "本地占位 ID 不是资源绑定状态，不应被隔离");
 	assert.deepEqual(original, untouched);
 	h.pipeline.observeResult(response(), h.ctx);
@@ -140,6 +132,8 @@ test("关闭或普通 400 不读取目标错误；只接受指定状态错误，
 		assert.equal(await h.pipeline.recover(failed(error), h.ctx), undefined);
 	}
 	const recoverableErrors = [
+		"Item with id 'rs_old' was not found", "Item with id 'msg_old' not found",
+		"Item 'msg_old' of type 'message' was provided without its required 'reasoning' item",
 		"400 encrypted content could not be verified", "invalid_encrypted_content",
 		"The encrypted content gAAA...ng== could not be verified.",
 		"The encrypted content 'gAAA...==' could not be decrypted.",
@@ -161,7 +155,7 @@ test("关闭或普通 400 不读取目标错误；只接受指定状态错误，
 	assert.equal(await h.pipeline.recover(failed(), h.ctx), undefined, "发送后关闭开关也不会启动恢复");
 });
 
-test("已产生部分输出、服务端引用和无可隔离状态的请求不会被自动重放；取消恢复有明确提示", async () => {
+test("已产生部分输出、服务端引用、store:true 和无可剥离 ID 的请求不会自动重放；取消恢复有明确提示", async () => {
 	await seed();
 	const h = harness();
 	await h.pipeline.transform(payload(), h.ctx);
@@ -173,8 +167,10 @@ test("已产生部分输出、服务端引用和无可隔离状态的请求不�
 		await h.pipeline.transform({ ...payload(), input: [item] }, h.ctx);
 		assert.equal(await h.pipeline.recover(failed(), h.ctx), undefined);
 	}
-	await h.pipeline.transform({ ...payload(), previous_response_id: undefined, input: [{ role: "user", content: "hello" }] }, h.ctx);
+	await h.pipeline.transform({ ...payload(), store: true }, h.ctx);
 	assert.equal(await h.pipeline.recover(failed(), h.ctx), undefined);
+	await h.pipeline.transform({ ...payload(), input: [{ type: "reasoning", summary: [], encrypted_content: "cipher-only" }] }, h.ctx);
+	assert.equal(await h.pipeline.recover(failed(), h.ctx), undefined, "只有密文或 response 引用、没有旧 item ID 时不进行无效重试");
 	await h.pipeline.transform(payload(), h.ctx);
 	await h.pipeline.recover(failed(), h.ctx);
 	h.pipeline.finishActivity(true, h.ctx);
@@ -194,7 +190,7 @@ test("接入开关默认关闭，TUI 可切换并保存；私有配置往返保�
 	assert.match(menu.render(100).join("\n"), /跨资源自动恢复\s+◀ 关闭 ▶/);
 	menu.handleInput(Key.right);
 	assert.equal(draft.openAIResponsesAutoRecoveryEnabled, true);
-	assert.match(menu.render(100).join("\n"), /保留新推理/);
+	assert.match(menu.render(100).join("\n"), /完整保留思维链/);
 	menu.handleInput(Key.ctrl("s"));
 	assert.equal((await outcome).action, "save");
 	const changed = upsertProviderInDocument(state, "gateway", draft);

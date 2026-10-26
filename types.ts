@@ -91,7 +91,7 @@ export interface StoredProvider {
 	httpProxyUrl?: string;
 	/** Responses 终态事件已完整转交后，是否主动结束本地 SSE 流。 */
 	openAIResponsesStreamCompletionMode?: OpenAIResponsesStreamCompletionMode;
-	/** 仅在跨资源或加密状态错误后隔离旧状态并自动重试一次。 */
+	/** 仅在跨资源、item ID 或加密状态错误后剥离旧 item ID 并重试一次，完整保留推理内容。 */
 	openAIResponsesAutoRecoveryEnabled?: boolean;
 	models: StoredModel[];
 }

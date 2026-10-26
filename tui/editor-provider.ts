@@ -222,7 +222,7 @@ async function editField(
 			t("跨资源自动恢复"),
 			[
 				{ id: "disabled", label: t("关闭 — 不检测或自动恢复跨资源状态错误") },
-				{ id: "enabled", label: t("开启 — 仅在指定错误后隔离旧状态并重试一次，逐次提示") },
+				{ id: "enabled", label: t("开启 — 仅在指定错误后剥离旧 item ID 并重试一次，保留思维链") },
 			],
 			draft.openAIResponsesAutoRecoveryEnabled ? "enabled" : "disabled",
 		);
@@ -335,8 +335,8 @@ export async function editProvider(
 			if (draft.api === "openai-responses") {
 				summaryLines.push(getOpenAIResponsesStreamCompletionModeHint(getOpenAIResponsesStreamCompletionMode(draft)));
 				summaryLines.push(draft.openAIResponsesAutoRecoveryEnabled
-					? t("跨资源自动恢复已开启：仅在指定错误后重试一次；隔离旧状态，保留新推理，每次提示结果。")
-					: t("跨资源自动恢复已关闭：不检测或自动处理资源归属与加密状态错误。"));
+					? t("跨资源自动恢复已开启：仅在指定错误后剥离旧 item ID 并重试一次；完整保留思维链，每次提示结果。")
+					: t("跨资源自动恢复已关闭：不检测或自动处理资源归属、item ID 与加密状态错误。"));
 			}
 			return summaryLines;
 		};

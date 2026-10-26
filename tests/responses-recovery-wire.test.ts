@@ -23,7 +23,7 @@ function sse(index: number): string {
 	].map((event) => `data: ${JSON.stringify(event)}\n\n`).join("");
 }
 
-test(`真实 Pi${magicEntry ? " + Magic Context" : ""}：400 后恢复，下一轮保留新推理、隔离旧状态并提示`, { skip: !realRuntime, timeout: 30_000 }, async () => {
+test(`真实 Pi${magicEntry ? " + Magic Context" : ""}：400 后仅剥离旧 ID，保留思维链并在下一轮保留新 ID`, { skip: !realRuntime, timeout: 30_000 }, async () => {
 	const agentDir = await mkdtemp(resolve(".test-responses-recovery-wire-"));
 	const originalCwd = process.cwd();
 	const originalFetch = globalThis.fetch;
@@ -76,13 +76,12 @@ test(`真实 Pi${magicEntry ? " + Magic Context" : ""}：400 后恢复，下一�
 			const request = new Request(input, init);
 			assert.equal(new URL(request.url).hostname, "recovery.invalid", "测试禁止真实外网请求");
 			requests.push(await request.json());
-			if (requests.length === 1) return new Response(JSON.stringify({ error: { message: "The requested item was created under a different Azure OpenAI resource. Use the same resource that created the item to access it.", type: "invalid_request_error" } }), { status: 400, headers: { "content-type": "application/json" } });
-			// [喵喵喵]: mock 必须拒绝本次缺陷产生的缺字段项，不能无条件接受恢复请求。
+			if (requests.length === 1) return new Response(JSON.stringify({ error: { message: "Item with id 'rs_old' was not found", type: "invalid_request_error" } }), { status: 400, headers: { "content-type": "application/json" } });
+			// [喵喵喵]: 此 mock 描述已确认支持无 ID 密文回放的网关场景，不把它当作所有 Azure 端点的契约。
 			for (const item of requests.at(-1).input) {
-				if (item.type === "reasoning") assert.equal(typeof item.id, "string", "reasoning 必须保留合法 id");
+				if (item.type === "reasoning") assert.ok(Array.isArray(item.summary));
 				if (item.type === "message" && Array.isArray(item.content)
 					&& item.content.some((part: any) => part.type === "output_text" || part.type === "refusal")) {
-					assert.equal(typeof item.id, "string", "output message 必须有 id");
 					assert.equal(item.status, "completed");
 				}
 			}
@@ -136,16 +135,21 @@ test(`真实 Pi${magicEntry ? " + Magic Context" : ""}：400 后恢复，下一�
 		assert.deepEqual(errors, []);
 		assert.equal(requests.length, 2, `应自动恢复一次；通知：${notifications.join("; ")}`);
 		assert.equal(session.getLastAssistantText(), "recovered");
-		assert.equal(requests[0].input.find((item: any) => item.id === "rs_old").encrypted_content, "cipher-old");
-		assert.equal(requests[1].input.some((item: any) => item.id === "rs_old" || item.id === "msg_old" || item.encrypted_content === "cipher-old"), false);
-		assert.ok(requests[1].input.some((item: any) => item.role === "assistant" && item.content === "old summary"), "旧摘要必须以合法普通消息保留");
+		const expectedReasoning = { ...requests[0].input.find((item: any) => item.id === "rs_old") };
+		assert.equal(expectedReasoning.encrypted_content, "cipher-old");
+		delete expectedReasoning.id;
+		assert.equal(requests[1].input.some((item: any) => item.id === "rs_old" || item.id === "msg_old"), false);
+		assert.deepEqual(requests[1].input.find((item: any) => item.encrypted_content === "cipher-old"), expectedReasoning, "旧 reasoning 只删除 ID，摘要与密文完整保留");
+		const expectedReply = { ...requests[0].input.find((item: any) => item.id === "msg_old") };
+		delete expectedReply.id;
+		assert.deepEqual(requests[1].input.find((item: any) => item.content?.[0]?.text === "old reply"), expectedReply, "message 旧 ID 一并剥离，不替换或改写正文");
 		assert.equal(manager.getBranch().filter((entry: any) => entry.type === "custom" && entry.customType === "pi-model-manager:responses-state-recovery").length, 1);
 		assert.equal(notifications.filter((message) => /自动恢复成功/.test(message)).length, 1);
 		assert.ok(manager.getBranch().some((entry: any) => entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason === "error"), "原始失败历史仍保留");
 		await session.prompt("continue with the recovered reasoning");
 		assert.equal(requests.length, 3, "正常下一轮不额外重试");
 		assert.equal(requests[2].input.find((item: any) => item.id === "rs_new_2").encrypted_content, "cipher-new-2");
-		assert.equal(requests[2].input.some((item: any) => item.encrypted_content === "cipher-old"), false);
+		assert.deepEqual(requests[2].input.find((item: any) => item.encrypted_content === "cipher-old"), expectedReasoning, "后续只对已报错的旧 ID 保持剥离，旧密文仍然保留");
 		assert.equal(notifications.filter((message) => /自动恢复成功/.test(message)).length, 1, "正常请求不冒充一次恢复");
 		assert.deepEqual(errors, []);
 		if (magicEntry) {
@@ -163,7 +167,7 @@ test(`真实 Pi${magicEntry ? " + Magic Context" : ""}：400 后恢复，下一�
 			} finally { db.close(); }
 			const log = await readFile(join(agentDir, "magic.log"), "utf8");
 			assert.doesNotMatch(log, /fail.closed|degrading silently|config:.*(?:invalid|parse.error)/i);
-			console.info("Magic 联合验证：记忆注入、编号、旧状态隔离、新推理及常规用量保存通过；恢复回复的 LKG 父条目关联不匹配，下一正常回复恢复匹配。");
+			console.info("Magic 联合验证：记忆注入、编号、旧 ID 剥离、思维链保留及常规用量保存通过；恢复回复的 LKG 父条目关联不匹配，下一正常回复恢复匹配。");
 		}
 	} finally {
 		if (magicEntry && session) await session.extensionRunner.emit({ type: "session_shutdown" });
