@@ -4,8 +4,9 @@
 // [喵喵喵]: 内置值由私有抓包工具生成，公开插件不携带捕获能力 (2026-07-26)
 
 import { cloneStringRecord, hasStringRecordEntries } from "../common.ts";
+import { buildCodexClientHeaders } from "./codex-client-headers.ts";
 import { t } from "../i18n.ts";
-import type { ApiKind, BuiltInClientHeaderProfileId, ClientHeaderProfileId, CompatSettings, StoredClientHeaderCapture } from "../types.ts";
+import type { ApiKind, BuiltInClientHeaderProfileId, ClientHeaderProfileId, CompatSettings, StoredClientHeaderCapture, StoredRequestHeaderProfile } from "../types.ts";
 import { CLAUDE_CODE_CLIENT_HEADERS, CODEX_CLI_CLIENT_HEADERS } from "./builtin-client-headers.ts";
 
 const ANTHROPIC_INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
@@ -68,6 +69,14 @@ export function stripManagedClientHeaders(
 	return hasStringRecordEntries(nativeHeaders) ? nativeHeaders : undefined;
 }
 
+export function resolveProviderCustomHeaders(
+	selection: { requestHeaderProfileId?: string; customClientHeaders?: Record<string, string> },
+	requestHeaderProfiles: Record<string, StoredRequestHeaderProfile>,
+): Record<string, string> {
+	const profileId = selection.requestHeaderProfileId;
+	return (profileId && requestHeaderProfiles[profileId]?.headers) || selection.customClientHeaders || {};
+}
+
 function getRecommendedClientHeaderProfile(api: ApiKind): ClientHeaderProfileId {
 	if (api === "anthropic-messages") return "claude-code";
 	if (api === "openai-completions" || api === "openai-responses") return "codex-cli";
@@ -97,7 +106,7 @@ export function getClientHeadersForProfile(
 		const headers = hasStringRecordEntries(clientHeaderCaptures[resolved]?.headers)
 			? clientHeaderCaptures[resolved]!.headers
 			: CODEX_CLI_CLIENT_HEADERS;
-		return cloneStringRecord(headers);
+		return buildCodexClientHeaders(headers);
 	}
 	return hasStringRecordEntries(customHeaders) ? cloneStringRecord(customHeaders) : undefined;
 }

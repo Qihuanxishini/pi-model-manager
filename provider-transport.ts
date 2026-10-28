@@ -3,6 +3,7 @@
 import { lazyStream, type Provider } from "@earendil-works/pi-ai";
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getClaudeCodeSessionId } from "./claude-code-compat.ts";
+import { applyCodexRequestHeaders } from "./codex-compat.ts";
 import { mergeModelRequestHeaders, resolveClientHeaderProfile } from "./presets/client-headers.ts";
 import { t } from "./i18n.ts";
 import { getProviderHttpProxyUrl, openTemporaryLocalProxyRoute } from "./local-proxy-service.ts";
@@ -95,10 +96,11 @@ export function createProviderTransport(runtime: ModelRuntime, native: Provider,
 	const endpoints = new Map(provider.models.map((model) => {
 		const api = model.api ?? provider.api;
 		const baseUrl = resolveRuntimeBaseUrl(api as ApiKind, model.baseUrl ?? provider.baseUrl);
-		return [model.id, { api, baseUrl }];
+		const profile = resolveClientHeaderProfile(provider.clientHeaderProfile, api as ApiKind);
+		const explicitHeaderNames = new Set(Object.keys(mergeModelRequestHeaders(provider.headers, model.headers) ?? {}));
+		return [model.id, { api, baseUrl, profile, explicitHeaderNames }];
 	}));
 	const proxyUrl = provider.httpProxyEnabled ? getProviderHttpProxyUrl(provider) : undefined;
-	const usesClaudeCodeHeaders = resolveClientHeaderProfile(provider.clientHeaderProfile, "anthropic-messages") === "claude-code";
 
 	const wrap = (stream: Provider["streamSimple"]): Provider["streamSimple"] => (model, context, options) => lazyStream(model, async () => {
 		const endpoint = endpoints.get(model.id);
@@ -132,7 +134,9 @@ export function createProviderTransport(runtime: ModelRuntime, native: Provider,
 			if (proxyUrl) throw new Error(t("该协议尚不支持接入级代理：{api}", { api: model.api }));
 			return stream(upstreamModel, context, options);
 		}
+		const usesCodexHeaders = endpoint.profile === "codex-cli";
 		if (!proxyUrl
+			&& !usesCodexHeaders
 			&& model.api !== "anthropic-messages"
 			&& !(model.api === "openai-responses" && provider.openAIResponsesStreamCompletionMode === "terminal-event")) {
 			return stream(upstreamModel, context, options);
@@ -149,12 +153,15 @@ export function createProviderTransport(runtime: ModelRuntime, native: Provider,
 				// [喵喵喵]: 仅替换 SDK 明确追加的端点路径，保留 beta 等请求参数，不对 URL 做全局 /v1 替换。
 				url.pathname = new URL(appendUrlPath(endpoint.baseUrl, "messages")).pathname;
 				request = new Request(url, request);
-				if (usesClaudeCodeHeaders) {
+				if (endpoint.profile === "claude-code") {
 					// [喵喵喵]: 从已构造的 body 取会话 ID，避免重试或会话重置后读取全局状态造成头与 metadata 错配。
 					const payload: unknown = await request.clone().json().catch(() => undefined);
 					const sessionId = getClaudeCodeSessionId(payload);
 					if (sessionId) request.headers.set("x-claude-code-session-id", sessionId);
 				}
+			}
+			if (usesCodexHeaders) {
+				await applyCodexRequestHeaders(request, model.api as ApiKind, options?.sessionId, endpoint.explicitHeaderNames);
 			}
 			let response: Response;
 			if (!proxyUrl) {

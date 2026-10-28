@@ -8,6 +8,7 @@
 
 import { BorderedLoader, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { t } from "../i18n.ts";
+import { resolveProviderCustomHeaders } from "../presets/client-headers.ts";
 import type { AnthropicThinkingProtocol, BuiltInClientHeaderProfileId, ModelDraft, ModelListFetchOutcome, ReasoningMode, StoredClientHeaderCapture, StoredRequestHeaderProfile } from "../types.ts";
 import { fetchModelIds } from "./model-list-fetch.ts";
 import { pickModelIdFromList } from "./model-picker.ts";
@@ -170,8 +171,7 @@ function getSelectedCustomHeaders(
 	draft: ModelDraft,
 	requestHeaderProfiles: Record<string, StoredRequestHeaderProfile>,
 ): Record<string, string> {
-	if (draft.clientHeaderProfile !== "custom" || !draft.requestHeaderProfileId) return {};
-	return requestHeaderProfiles[draft.requestHeaderProfileId]?.headers ?? {};
+	return draft.clientHeaderProfile === "custom" ? resolveProviderCustomHeaders(draft, requestHeaderProfiles) : {};
 }
 
 async function pickModelFromUpstream(

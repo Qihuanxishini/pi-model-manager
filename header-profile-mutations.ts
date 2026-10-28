@@ -5,8 +5,9 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { persistManagedConfiguration } from "./configuration-persistence.ts";
 import { t } from "./i18n.ts";
-import { registerAllFromState } from "./provider-registrar.ts";
-import { deleteRequestHeaderProfileFromDocument, upsertRequestHeaderProfileInDocument } from "./state-document.ts";
+import { formatUnknownError } from "./common.ts";
+import { reconcileProvider } from "./provider-registrar.ts";
+import { deleteRequestHeaderProfileFromDocument, upsertRequestHeaderProfileInDocument, validateRequestHeaderProfileDraft } from "./state-document.ts";
 import type { RequestHeaderProfileDraft, StateDocument, StoredProvider } from "./types.ts";
 
 function providerReferencesProfile(provider: StoredProvider, profileId: string): boolean {
@@ -22,6 +23,20 @@ function findProfileProviderIds(
 	return Object.entries(document.providers)
 		.filter(([, provider]) => provider.managed && [...ids].some((profileId) => providerReferencesProfile(provider, profileId)))
 		.map(([providerId]) => providerId);
+}
+
+async function refreshProfileProviders(pi: ExtensionAPI, document: StateDocument, providerIds: string[]): Promise<string[]> {
+	const warnings: string[] = [];
+	for (const providerId of providerIds) {
+		const provider = document.providers[providerId];
+		if (!provider) continue;
+		try {
+			await reconcileProvider(pi, providerId, provider, document.requestHeaderProfiles, document.clientHeaderCaptures);
+		} catch (error) {
+			warnings.push(`${providerId}: ${formatUnknownError(error)}`);
+		}
+	}
+	return warnings;
 }
 
 function notifyHeaderProfileRefresh(
@@ -44,12 +59,21 @@ export async function saveRequestHeaderProfileConfiguration(
 	oldProfileId: string | undefined,
 ): Promise<void> {
 	const profileId = draft.profileId.trim();
-	const nextState = await persistManagedConfiguration(ctx, (latest) => ({
-		document: upsertRequestHeaderProfileInDocument(latest, oldProfileId, draft),
-		changedProviderIds: findProfileProviderIds(latest, [profileId, ...(oldProfileId ? [oldProfileId] : [])]),
-		removedProviderIds: [],
-	}));
-	const warnings = await registerAllFromState(pi, nextState);
+	let affectedProviderIds: string[] = [];
+	const nextState = await persistManagedConfiguration(ctx, (latest) => {
+		if (oldProfileId && !latest.requestHeaderProfiles[oldProfileId]) {
+			throw new Error(t("请求头不存在：{profileId}", { profileId: oldProfileId }));
+		}
+		const errors = validateRequestHeaderProfileDraft(draft, latest, oldProfileId);
+		if (errors.length > 0) throw new Error(errors.join("\n"));
+		affectedProviderIds = findProfileProviderIds(latest, [profileId, ...(oldProfileId ? [oldProfileId] : [])]);
+		return {
+			document: upsertRequestHeaderProfileInDocument(latest, oldProfileId, draft),
+			changedProviderIds: affectedProviderIds,
+			removedProviderIds: [],
+		};
+	});
+	const warnings = await refreshProfileProviders(pi, nextState, affectedProviderIds);
 	notifyHeaderProfileRefresh(ctx, t("已保存请求头 {profileId}", { profileId: draft.profileId.trim() }), warnings);
 }
 
@@ -59,11 +83,15 @@ export async function deleteRequestHeaderProfileConfiguration(
 	_state: StateDocument,
 	profileId: string,
 ): Promise<void> {
-	const nextState = await persistManagedConfiguration(ctx, (latest) => ({
-		document: deleteRequestHeaderProfileFromDocument(latest, profileId),
-		changedProviderIds: findProfileProviderIds(latest, [profileId]),
-		removedProviderIds: [],
-	}));
-	const warnings = await registerAllFromState(pi, nextState);
+	let affectedProviderIds: string[] = [];
+	const nextState = await persistManagedConfiguration(ctx, (latest) => {
+		affectedProviderIds = findProfileProviderIds(latest, [profileId]);
+		return {
+			document: deleteRequestHeaderProfileFromDocument(latest, profileId),
+			changedProviderIds: affectedProviderIds,
+			removedProviderIds: [],
+		};
+	});
+	const warnings = await refreshProfileProviders(pi, nextState, affectedProviderIds);
 	notifyHeaderProfileRefresh(ctx, t("已删除请求头 {profileId}", { profileId }), warnings);
 }

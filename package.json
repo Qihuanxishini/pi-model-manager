@@ -22,6 +22,7 @@
     "openai-responses-payload.ts",
     "openai-service-tier.ts",
     "claude-code-compat.ts",
+    "codex-compat.ts",
     "builtin-model-catalog.ts",
     "models-json-manager.ts",
     "models-json-sync.ts",

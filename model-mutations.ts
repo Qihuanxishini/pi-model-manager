@@ -23,7 +23,7 @@ import {
 } from "./models-json-sync.ts";
 import { reconcileProvider, unregisterManagedProvider } from "./provider-registrar.ts";
 import { withModelRescue } from "./rescue.ts";
-import { deleteModelFromDocument, deleteProviderFromDocument, getModelFullId, upsertModelInDocument, upsertProviderInDocument } from "./state-document.ts";
+import { deleteModelFromDocument, deleteProviderFromDocument, getModelFullId, upsertModelInDocument, upsertProviderInDocument, validateModelDraft, validateProviderDraft } from "./state-document.ts";
 import type { StateDocument, StoredProvider } from "./types.ts";
 import type { createModelDraftForStoredProvider, createProviderDraft } from "./state-document.ts";
 
@@ -87,6 +87,12 @@ export async function saveProviderConfiguration(
 	await assertProviderIsEditable(draft.providerId);
 	if (oldProviderId) await assertProviderIsEditable(oldProviderId);
 	const prepare = (latest: StateDocument) => {
+		if (oldProviderId && !latest.providers[oldProviderId]) {
+			throw new Error(t("接入配置已不存在：{providerId}", { providerId: oldProviderId }));
+		}
+		// [喵喵喵]: UI 校验之后可能有其它进程保存；必须在锁内针对最新状态重验创建和重命名前提。
+		const errors = validateProviderDraft(draft, latest, new Set(), oldProviderId);
+		if (errors.length > 0) throw new Error(errors.join("\n"));
 		const document = upsertProviderInDocument(latest, oldProviderId, draft);
 		return { document, changedProviderIds: [draft.providerId], removedProviderIds: [] };
 	};
@@ -139,6 +145,11 @@ export async function saveModelConfiguration(
 	await assertProviderIsEditable(draft.providerId);
 	const newModelId = draft.modelId.trim();
 	const prepare = (latest: StateDocument) => {
+		if (replacedModelId && !latest.providers[draft.providerId]?.models.some((model) => model.id === replacedModelId)) {
+			throw new Error(t("模型不存在：{fullId}", { fullId: getModelFullId(draft.providerId, replacedModelId) }));
+		}
+		const errors = validateModelDraft(draft, latest, replacedModelId);
+		if (errors.length > 0) throw new Error(errors.join("\n"));
 		const document = upsertModelInDocument(latest, draft, { replacedModelId });
 		return { document, changedProviderIds: [draft.providerId], removedProviderIds: [] };
 	};
@@ -175,7 +186,11 @@ export async function saveNewProviderWithModelConfiguration(
 ): Promise<void> {
 	await assertProviderIsEditable(providerDraft.providerId);
 	const prepare = (latest: StateDocument) => {
+		const providerErrors = validateProviderDraft(providerDraft, latest, new Set());
+		if (providerErrors.length > 0) throw new Error(providerErrors.join("\n"));
 		const withProvider = upsertProviderInDocument(latest, undefined, providerDraft);
+		const modelErrors = validateModelDraft(modelDraft, withProvider);
+		if (modelErrors.length > 0) throw new Error(modelErrors.join("\n"));
 		const document = upsertModelInDocument(withProvider, modelDraft);
 		return { document, changedProviderIds: [providerDraft.providerId], removedProviderIds: [] };
 	};

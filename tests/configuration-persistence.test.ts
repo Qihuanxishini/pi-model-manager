@@ -268,3 +268,80 @@ test("atomicWriteText 未传 mode 时不强制权限，共享配置文件保持�
 	const [testStats, controlStats] = await Promise.all([stat(testFile), stat(controlFile)]);
 	assert.equal(testStats.mode & 0o777, controlStats.mode & 0o777);
 });
+
+test("Codex 派生字段保存回读后仍为生成值，显式同值覆盖保留且禁用时不残留身份", async () => {
+	await writeFile(MODELS_JSON_PATH, jsonSource({ providers: { codex: {
+		api: "openai-responses", baseUrl: "https://fixture.test/v1", piModelManager: { managed: true },
+		models: [{ id: "provider-ua" }, { id: "model-ua" }, { id: "explicit-version" }],
+	} } }));
+	await writeFile(STATE_PATH, jsonSource({ version: 5, managedProviderIds: ["codex"], providers: {}, models: {}, requestHeaderProfiles: {}, clientHeaderCaptures: {} }));
+	const ctx = { modelRegistry: { async refresh() {} } } as any;
+	await persistManagedConfiguration(ctx, (latest) => {
+		const document = structuredClone(latest);
+		const provider = document.providers.codex!;
+		provider.headers = { "User-Agent": "codex_exec/0.166.0" };
+		provider.models[1]!.headers = { "user-agent": "codex-tui/0.167.0" };
+		provider.models[2]!.headers = { Version: "0.164.0" };
+		return { document, changedProviderIds: ["codex"], removedProviderIds: [] };
+	});
+	const reloaded = (await readState()).providers.codex!;
+	assert.equal(reloaded.models[0]!.headers, undefined);
+	assert.deepEqual(reloaded.models[1]!.headers, { "user-agent": "codex-tui/0.167.0" });
+	assert.deepEqual(reloaded.models[2]!.headers, { version: "0.164.0" });
+	await persistManagedConfiguration(ctx, (latest) => {
+		const document = structuredClone(latest);
+		document.providers.codex!.headers = { "user-agent": "codex_exec/0.168.0" };
+		document.providers.codex!.models[1]!.headers = { "user-agent": "codex-tui/0.169.0" };
+		return { document, changedProviderIds: ["codex"], removedProviderIds: [] };
+	});
+	const raw = JSON.parse(await readFile(MODELS_JSON_PATH, "utf8")).providers.codex.models;
+	assert.equal(raw[0].headers.version, "0.168.0");
+	assert.equal(raw[0].headers.originator, "codex_exec");
+	assert.equal(raw[1].headers.version, "0.169.0");
+	assert.equal(raw[1].headers.originator, "codex-tui");
+	assert.equal(raw[2].headers.version, "0.164.0", "与旧模板同值的显式版本不能被剥离");
+	await persistManagedConfiguration(ctx, (latest) => {
+		const document = structuredClone(latest);
+		document.providers.codex!.clientHeaderProfile = "disabled";
+		return { document, changedProviderIds: ["codex"], removedProviderIds: [] };
+	});
+	const disabled = JSON.parse(await readFile(MODELS_JSON_PATH, "utf8")).providers.codex.models;
+	assert.equal(disabled[0].headers.version, undefined);
+	assert.equal(disabled[0].headers.originator, undefined);
+	assert.equal(disabled[1].headers.version, undefined);
+	assert.equal(disabled[1].headers.originator, undefined);
+	assert.equal(disabled[2].headers.version, "0.164.0");
+});
+
+test("过期编辑器创建和重命名发生重名时，锁内拒绝且不覆盖双文件", async () => {
+	const { createEmptyState } = await import("../state-store.ts");
+	const { createProviderDraft, createModelDraftForStoredProvider } = await import("../state-document.ts");
+	const { saveProviderConfiguration, saveModelConfiguration, saveNewProviderWithModelConfiguration } = await import("../model-mutations.ts");
+	const { saveRequestHeaderProfileConfiguration } = await import("../header-profile-mutations.ts");
+	const modelsSource = jsonSource({ providers: {
+		taken: { api: "openai-responses", baseUrl: "https://fixture.test/v1", piModelManager: { managed: true }, models: [{ id: "kept" }, { id: "other" }] },
+		source: { api: "openai-responses", baseUrl: "https://source.test/v1", piModelManager: { managed: true }, models: [{ id: "source-model" }] },
+	} });
+	const metadataSource = jsonSource({ version: 5, managedProviderIds: ["taken", "source"], providers: {}, models: {},
+		requestHeaderProfiles: { taken: { name: "Kept", headers: { "x-tenant": "kept" } }, source: { name: "Source", headers: { "x-tenant": "source" } } }, clientHeaderCaptures: {} });
+	await writeFile(MODELS_JSON_PATH, modelsSource);
+	await writeFile(STATE_PATH, metadataSource);
+	const stale = createEmptyState();
+	const latest = await readState();
+	const providerDraft = { ...createProviderDraft(), providerId: "taken", providerName: "Must not overwrite" };
+	const modelDraft = { ...createModelDraftForStoredProvider("taken", latest.providers.taken!), modelId: "kept", modelName: "Must not overwrite" };
+	const ctx = { modelRegistry: { async refresh() { assert.fail("失败保存不得刷新 registry"); } } } as any;
+	const pi = { registerProvider() { assert.fail("失败保存不得注册 provider"); } } as any;
+	for (const oldId of [undefined, "source"]) {
+		await assert.rejects(saveProviderConfiguration(pi, ctx, stale, providerDraft, oldId), /接入 ID 已存在/);
+		await assert.rejects(saveRequestHeaderProfileConfiguration(pi, ctx, stale,
+			{ profileId: "taken", profileName: "Must not overwrite", headers: { "x-tenant": "changed" }, selectedIndex: 0 }, oldId), /请求头 ID 已存在/);
+	}
+	for (const oldId of [undefined, "other"]) {
+		await assert.rejects(saveModelConfiguration(pi, ctx, stale, modelDraft, oldId), /模型已存在/);
+	}
+	await assert.rejects(saveNewProviderWithModelConfiguration(pi, ctx, stale, providerDraft, modelDraft), /接入 ID 已存在/);
+	assert.equal(await readFile(MODELS_JSON_PATH, "utf8"), modelsSource);
+	assert.equal(await readFile(STATE_PATH, "utf8"), metadataSource);
+	assert.equal(await pathExists(transactionPath), false);
+});

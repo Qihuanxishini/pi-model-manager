@@ -6,6 +6,7 @@ export const DEFAULT_UI_LANGUAGE: UiLanguage = "zh-CN";
 
 const ENGLISH_MESSAGES = {
 	"Base URL 必须使用 http 或 https": "Base URL must use http or https",
+	"Base URL 格式错误：{error}": "Invalid Base URL: {error}",
 	"Base URL 不支持查询参数（?）或片段（#）；请填写 API 根地址": "Base URL cannot contain query parameters (?) or fragments (#); enter the API root URL",
 	"Base URL 不支持内嵌认证；请使用 API key 或请求头配置": "Base URL cannot contain credentials; use the API key or header configuration",
 	"请求模型不属于当前接入配置：{modelId}": "Request model is not part of the current provider configuration: {modelId}",
@@ -259,6 +260,7 @@ const ENGLISH_MESSAGES = {
 	"写入 {targetPath} 失败；完整内容已保留在临时文件：{tempPath}：{error}": "Failed to write {targetPath}; the complete content remains in temporary file {tempPath}: {error}",
 	"另一个 Pi 进程正在保存模型配置；无法在限定时间内获取锁：{path}": "Another Pi process is saving the model configuration; the lock could not be acquired in time: {path}",
 	"配置锁所有权在释放前发生变化，已保留锁文件供检查：{path}": "The configuration lock ownership changed before release; the lock file was retained for inspection: {path}",
+	"检测到旧版失效配置锁；请确认没有旧版 Pi 正在保存，再手动移除：{path}": "An inactive legacy configuration lock was detected; confirm that no older Pi process is saving before removing it manually: {path}",
 	"{path} 必须是对象": "{path} must be an object",
 	"{path}.oldSource 必须是字符串或 null": "{path}.oldSource must be a string or null",
 	"{path} 缺少有效内容或签名": "{path} is missing valid content or a signature",
@@ -280,6 +282,8 @@ const ENGLISH_MESSAGES = {
 	"代理地址无效：{url}": "Invalid proxy URL: {url}",
 	"代理地址目前只支持 http:// 或 https:// 代理": "Only http:// or https:// proxies are currently supported",
 	"代理请求失败：{code}": "Proxy request failed: {code}",
+	"代理安全拦截：上游返回了重定向至 {target}，已拒绝跟随": "Proxy security block: upstream redirected to {target}; following it was refused",
+	"拒绝转发：目标 Origin {actual} 与注册路由 {expected} 不一致": "Forwarding refused: target origin {actual} does not match the registered route {expected}",
 	"无错误消息": "no error message",
 	"未知代理错误": "Unknown proxy error",
 	"不支持的上游协议：{protocol}": "Unsupported upstream protocol: {protocol}",
@@ -435,7 +439,7 @@ function interpolate(template: string, values: TranslationValues): string {
 }
 
 export function t(key: MessageKey, values: TranslationValues = {}): string {
-	const template = currentLanguage === "en" ? ENGLISH_MESSAGES[key] : key;
+	const template = currentLanguage === "en" ? ENGLISH_MESSAGES[key] ?? key : key;
 	return interpolate(template, values);
 }
 

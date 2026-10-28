@@ -18,6 +18,7 @@ export const CLAUDE_CODE_CLIENT_HEADERS: Record<string, string> = {
 
 export const CODEX_CLI_CLIENT_HEADERS: Record<string, string> = {
 	"originator": "codex-tui",
+	"version": "0.164.0",
 	"user-agent": "codex-tui/0.164.0 (Windows 10.0.26300; x86_64) unknown (codex-tui; 0.164.0)",
 	"x-codex-beta-features": "remote_compaction_v2",
 };

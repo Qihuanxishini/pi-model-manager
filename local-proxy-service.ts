@@ -95,20 +95,19 @@ function ensureSupportedProxyProtocol(proxy: URL): void {
 
 function pipeResponse(upstreamResponse: IncomingMessage, response: ServerResponse, route: ProviderProxyRoute): void {
 	const statusCode = upstreamResponse.statusCode ?? 502;
-	// [喵喵喵]: 上游返回 3xx 重定向时，若重定向目标跨域，直接在代理层拦截，防止客户端在跟随重定向时泄露真实 IP
+	// [喵喵喵]: 同源绝对 Location 也可能让 SDK 离开本地代理直连上游；所有带 Location 的重定向均在代理层拒绝。
 	if (statusCode >= 300 && statusCode < 400 && upstreamResponse.headers.location) {
+		let target = "[invalid Location]";
 		try {
-			const target = new URL(upstreamResponse.headers.location, route.upstreamOrigin);
-			if (target.origin !== route.upstreamOrigin) {
-				response.writeHead(502, { "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff" });
-				response.end(t("代理安全拦截：上游返回了跨域重定向至 {target}，已拒绝跟随", { target: target.origin }));
-				// [喵喵喵]: 拦截后主动销毁上游响应，避免未消费的 body 占用 socket 直到超时
-				upstreamResponse.destroy();
-				return;
-			}
+			target = new URL(upstreamResponse.headers.location, route.upstreamOrigin).origin;
 		} catch {
-			// 非法 location 则继续透传交由客户端处理
+			// [喵喵喵]: 非法 Location 同样拒绝，不把未知跳转交给客户端。
 		}
+		const message = t("代理安全拦截：上游返回了重定向至 {target}，已拒绝跟随", { target });
+		response.writeHead(502, { "content-type": "text/plain; charset=utf-8", "x-content-type-options": "nosniff" });
+		response.end(message);
+		upstreamResponse.destroy();
+		return;
 	}
 	const headers = stripHopByHopHeaders(upstreamResponse.headers);
 	response.writeHead(statusCode, upstreamResponse.statusMessage, headers);

@@ -20,6 +20,7 @@ import {
 import {
 	getClientHeadersForProfile,
 	stripManagedClientHeaders,
+	resolveProviderCustomHeaders,
 } from "./presets/client-headers.ts";
 import { normalizeThinkingLevelMap } from "./presets/thinking.ts";
 import { fromNativeBaseUrl, resolveRuntimeBaseUrl, toNativeBaseUrl } from "./runtime-base-url.ts";
@@ -94,15 +95,6 @@ function readModelInput(model: ModelsJsonModelEntry): ModelInputKind[] {
 	return input && input.length > 0 ? [...new Set(input)] : ["text"];
 }
 
-function resolveProviderCustomHeaders(
-	providerMetadata: MetadataDocument["providers"][string] | undefined,
-	metadata: MetadataDocument,
-): Record<string, string> {
-	const profileId = providerMetadata?.requestHeaderProfileId;
-	if (profileId && metadata.requestHeaderProfiles[profileId]) return metadata.requestHeaderProfiles[profileId].headers;
-	return providerMetadata?.customClientHeaders ?? {};
-}
-
 function stripProviderInheritedHeaders(
 	modelHeaders: Record<string, string> | undefined,
 	providerHeaders: Record<string, string> | undefined,
@@ -146,8 +138,10 @@ function buildStoredModelFromModelsJson(
 			effectiveCompat,
 		)
 		: undefined;
+	const modelMetadata = metadata.models[getFullModelId(providerId, model.id)];
 	const nativeHeaders = managed
-		? stripProviderInheritedHeaders(stripManagedClientHeaders(model.headers, profileHeaders), providerHeaders)
+		? stripProviderInheritedHeaders(stripManagedClientHeaders(model.headers,
+			modelMetadata?.generatedClientHeaders ?? profileHeaders), providerHeaders)
 		: cloneStringRecord(model.headers);
 	const stored: StoredModel = {
 		id: model.id,
@@ -158,7 +152,6 @@ function buildStoredModelFromModelsJson(
 		cost: readModelCost(model),
 	};
 	if (explicitApi && explicitApi !== providerApi) stored.api = explicitApi;
-	const modelMetadata = metadata.models[getFullModelId(providerId, model.id)];
 	let modelBaseUrl = model.baseUrl ?? providerBaseUrl;
 	if (managed && model.baseUrl) {
 		modelBaseUrl = fromNativeBaseUrl(effectiveApi, model.baseUrl, modelMetadata?.anthropicApiRoot, metadata.version < 5);
@@ -206,7 +199,7 @@ async function buildStoredProviderFromModelsJson(
 		: nativeBaseUrl;
 	const clientHeaderProfile = managed ? providerMetadata?.clientHeaderProfile ?? "recommended" : "disabled";
 	const customClientHeaders = managed && clientHeaderProfile === "custom"
-		? resolveProviderCustomHeaders(providerMetadata, metadata)
+		? resolveProviderCustomHeaders(providerMetadata ?? {}, metadata.requestHeaderProfiles)
 		: {};
 	const providerCompat = entry.compat ? cloneJson(entry.compat) : undefined;
 	const models = rawModels

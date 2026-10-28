@@ -3,6 +3,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
 import { closeLocalProxyServer, openTemporaryLocalProxyRoute } from "../local-proxy-service.ts";
+import { getUiLanguage, setUiLanguage } from "../i18n.ts";
 
 interface RecordingProxy {
 	port: number;
@@ -90,25 +91,37 @@ test("本地代理拦截跨域 3xx 重定向并返回 502", async () => {
 	await closeLocalProxyServer();
 });
 
-test("本地代理原样透传同域 3xx 重定向", async () => {
+test("默认跟随重定向的客户端也不能经同源绝对 Location 绕过代理，英文错误正常返回", async () => {
+	let directRequests = 0;
+	const upstream = http.createServer((_request, response) => {
+		directRequests += 1;
+		response.end("unexpected direct request");
+	});
+	await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+	const upstreamOrigin = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
 	const proxy = await startRecordingProxy((response) => {
-		response.writeHead(302, { location: "/v1/next" });
+		response.writeHead(302, { location: `${upstreamOrigin}/v1/next` });
 		response.end();
 	});
+	const previousLanguage = getUiLanguage();
 	try {
-		const route = await openTemporaryLocalProxyRoute(
-			"passthrough-provider",
-			"http://upstream.invalid/v1",
-			`http://127.0.0.1:${proxy.port}`,
-		);
-		const passthrough = await requestText(`${route.url}/models`);
-		assert.equal(passthrough.status, 302);
-		assert.equal(passthrough.location, "/v1/next");
-		route.close();
+		setUiLanguage("en");
+		const route = await openTemporaryLocalProxyRoute("absolute-redirect-provider", `${upstreamOrigin}/v1`, `http://127.0.0.1:${proxy.port}`);
+		try {
+			const blocked = await fetch(`${route.url}/models`);
+			assert.equal(blocked.status, 502);
+			assert.equal(blocked.headers.get("location"), null);
+			assert.match(await blocked.text(), /Proxy security block/);
+			assert.equal(directRequests, 0);
+			assert.equal(proxy.requests.length, 1);
+		} finally { route.close(); }
 	} finally {
+		setUiLanguage(previousLanguage);
 		await proxy.close();
+		await closeLocalProxyServer();
+		upstream.closeAllConnections();
+		await new Promise<void>((resolve) => upstream.close(() => resolve()));
 	}
-	await closeLocalProxyServer();
 });
 
 test("模型发现经本地代理时禁止跟随 3xx 重定向（redirect: manual）", async () => {
@@ -130,8 +143,8 @@ test("模型发现经本地代理时禁止跟随 3xx 重定向（redirect: manua
 			httpProxyUrl: `http://127.0.0.1:${proxy.port}`,
 		});
 		assert.equal(outcome.status, "failed");
-		if (outcome.status === "failed") assert.match(outcome.message ?? "", /302/);
-		// 同域 302 已被代理透传；客户端不跟随即停留在首个 302，不会反复回打代理
+		if (outcome.status === "failed") assert.match(outcome.message ?? "", /502/);
+		// 同域重定向在代理层拒绝，发现客户端不能反复回打代理。
 		assert.ok(proxy.requests.length <= 2, `客户端不应跟随重定向（实际请求数：${proxy.requests.length}）`);
 	} finally {
 		await proxy.close();

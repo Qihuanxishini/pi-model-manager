@@ -9,6 +9,9 @@ import { join } from "node:path";
 import { cloneJson, isObjectRecord, stringifyJson, stripJsonNoise } from "./common.ts";
 import { readStableTextFileSnapshot, type FileSignature } from "./file-snapshot.ts";
 import { t } from "./i18n.ts";
+import { mergeCompatSettings } from "./compat-settings.ts";
+import { getClientHeadersForProfile, mergeModelRequestHeaders, resolveClientHeaderProfile } from "./presets/client-headers.ts";
+import { getGeneratedCodexClientHeaders } from "./presets/codex-client-headers.ts";
 import { fromNativeBaseUrl, toNativeBaseUrl } from "./runtime-base-url.ts";
 import type {
 	ApiKind,
@@ -53,6 +56,7 @@ interface ProviderMetadata {
 interface ModelMetadata {
 	openAIServiceTier?: OpenAIServiceTier;
 	anthropicApiRoot?: boolean;
+	generatedClientHeaders?: Record<string, string>;
 }
 
 export interface MetadataDocument {
@@ -269,6 +273,8 @@ function readModelMetadata(raw: unknown, path: string): ModelMetadata {
 	if (anthropicApiRoot) metadata.anthropicApiRoot = true;
 	const openAIServiceTier = readOptionalOpenAIServiceTier(raw, "openAIServiceTier", path);
 	if (openAIServiceTier) metadata.openAIServiceTier = openAIServiceTier;
+	const generatedClientHeaders = readOptionalStringRecord(raw, "generatedClientHeaders", path);
+	if (generatedClientHeaders !== undefined) metadata.generatedClientHeaders = generatedClientHeaders;
 	return metadata;
 }
 
@@ -412,10 +418,17 @@ function extractProviderMetadata(provider: StoredProvider): ProviderMetadata {
 	return metadata;
 }
 
-function extractModelMetadata(model: StoredModel, provider: StoredProvider): ModelMetadata {
+function extractModelMetadata(model: StoredModel, provider: StoredProvider, state?: StateDocument): ModelMetadata {
 	const metadata: ModelMetadata = {};
-	if (toNativeBaseUrl(model.api ?? provider.api, model.baseUrl ?? provider.baseUrl).anthropicApiRoot) metadata.anthropicApiRoot = true;
+	const api = model.api ?? provider.api;
+	if (toNativeBaseUrl(api, model.baseUrl ?? provider.baseUrl).anthropicApiRoot) metadata.anthropicApiRoot = true;
 	if (model.openAIServiceTier) metadata.openAIServiceTier = model.openAIServiceTier;
+	if (state && resolveClientHeaderProfile(provider.clientHeaderProfile, api) === "codex-cli") {
+		const headers = getClientHeadersForProfile(provider.clientHeaderProfile, api, {}, state.clientHeaderCaptures,
+			mergeCompatSettings(provider.compat, model.compat));
+		// [喵喵喵]: 来源随双文件事务一起保存；显式值与模板相同也保留，UA 派生值不能在回读后变成显式覆盖。
+		metadata.generatedClientHeaders = getGeneratedCodexClientHeaders(headers ?? {}, mergeModelRequestHeaders(provider.headers, model.headers));
+	}
 	return metadata;
 }
 
@@ -517,7 +530,7 @@ function extractMetadata(state: StateDocument): MetadataDocument {
 		const providerMetadata = extractProviderMetadata(provider);
 		if (Object.keys(providerMetadata).length > 0) metadata.providers[providerId] = providerMetadata;
 		for (const model of provider.models) {
-			const modelMetadata = extractModelMetadata(model, provider);
+			const modelMetadata = extractModelMetadata(model, provider, state);
 			if (Object.keys(modelMetadata).length > 0) metadata.models[getFullModelId(providerId, model.id)] = modelMetadata;
 		}
 	}
