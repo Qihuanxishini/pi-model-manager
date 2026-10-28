@@ -260,20 +260,43 @@ test("真实 Pi：四协议代理前后端点、业务头、payload 和 SSE 结�
 		local.headers.set("x-test-target-url", request.url);
 		return originalFetch(local);
 	};
-	const runtime = await ModelRuntime.create({ credentials: emptyCredentials, modelsPath: null, refreshOnCreate: false, allowModelNetwork: false });
+	// [喵喵喵]: 生产入口总是先持久化再注册；宿主必须持有同一份原生模型配置，才能在头钩子之前解析模型级表达式。
+	const modelsPath = join(agentDir, "four-protocol-models.json");
+	await writeFile(modelsPath, JSON.stringify({ providers: {} }));
+	const runtime = await ModelRuntime.create({ credentials: emptyCredentials, modelsPath, refreshOnCreate: false, allowModelNetwork: false });
 	const pi = { registerProvider: (native: any) => runtime.registerNativeProvider(native), unregisterProvider: (id: string) => runtime.unregisterProvider(id) } as any;
 	try {
 		for (api of ["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"] as ApiKind[]) {
 			const id = `wire-${api}`;
 			const hostname = api === "openai-completions" ? "api.deepseek.com" : "gateway.invalid";
 			const config = provider(api, `http://${hostname}/xxx`);
+			config.headers = { "X-Remove-Provider": "remove", "X-Provider-Override": "configured" };
+			config.models[0]!.headers = { "X-Remove-Model": "remove", "X-Model-Route": "$PI_WIRE_MODEL_ROUTE" };
+			await writeFile(modelsPath, JSON.stringify(buildSynchronizedModelsDocument({ version: 2, providers: { [id]: config }, managedProviderIds: [id], requestHeaderProfiles: {}, clientHeaderCaptures: {} }, { providers: {} })));
+			await runtime.refresh({ allowNetwork: false });
 			const untouched = structuredClone(config);
 			const results: unknown[] = [];
 			for (const enabled of [false, true]) {
 				await reconcileProvider(pi, id, { ...config, httpProxyEnabled: enabled, httpProxyUrl: localUrl });
 				const model = runtime.getModel(id, config.models[0]!.id)!;
 				assert.equal(model.baseUrl, config.baseUrl);
-				const result = await runtime.streamSimple(model, context as any, { reasoning: "high", maxTokens: 12000 }).result();
+				let transforms = 0;
+				const result = await runtime.streamSimple(model, context as any, {
+					reasoning: "high", maxTokens: 12000,
+					env: { PI_WIRE_MODEL_ROUTE: "resolved-model-route" },
+					headers: { "X-Provider-Override": "call-override" },
+					transformHeaders(input) {
+						transforms++;
+						const headers = new Headers(input);
+						assert.equal(headers.get("x-provider-override"), "call-override");
+						assert.equal(headers.get("x-model-route"), "resolved-model-route");
+						headers.delete("x-remove-provider");
+						headers.delete("x-remove-model");
+						headers.set("x-model-route", "hook-route");
+						return Object.fromEntries(headers);
+					},
+				}).result();
+				assert.equal(transforms, 1);
 				assert.equal(result.stopReason, "stop", `${api}, proxy=${enabled}: ${result.errorMessage}; ${serverErrors.join("\n")}`);
 				assert.equal(result.content.filter((block: any) => block.type === "text").map((block: any) => block.text).join(""), "ok");
 				results.push(captured.at(-1));
@@ -283,6 +306,10 @@ test("真实 Pi：四协议代理前后端点、业务头、payload 和 SSE 结�
 			const request = captured.at(-1)!;
 			assert.equal(request.headers["user-agent"], "wire-fixture");
 			assert.equal(request.headers["x-test-client"], "user-value");
+			assert.equal(request.headers["x-provider-override"], "call-override");
+			assert.equal(request.headers["x-model-route"], "hook-route");
+			assert.equal(request.headers["x-remove-provider"], undefined);
+			assert.equal(request.headers["x-remove-model"], undefined);
 			const path = new URL(request.url).pathname;
 			assert.ok(path.startsWith("/xxx/"), path);
 			if (api === "anthropic-messages") {

@@ -255,8 +255,8 @@ Fast and Ultrafast require support from the upstream service, account, and model
 
 The current built-in values were derived from real client requests with authentication fields removed:
 
-- Claude Code `2.1.278`
-- Codex TUI `0.155.1`
+- Claude Code `2.1.312`
+- Codex TUI `0.165.0`
 
 These headers only help API gateways that require a recognized client identity; they do not replace an API key. The public repository and npm package contain **no request-capture tooling, user captures, authentication headers, or machine-local state**. Disable identity headers or create a custom profile if a built-in profile does not fit your endpoint.
 
@@ -318,7 +318,7 @@ pi -e .
 
 Pi loads the TypeScript entry point directly; no separate build step is required. Do not commit `state.json`, `bootstrap-meta.json`, `node_modules`, or request-capture data.
 
-Tests have separate stub and real-host entry points. The current real-host verification baseline is Pi `0.99.0`:
+Tests have separate stub and real-host entry points. The current real-host verification baseline is Pi `1.4.0`:
 
 ```bash
 npm test

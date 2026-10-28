@@ -1,7 +1,6 @@
 // 在 Pi 已构造请求后选择传输路线；协议判断始终使用真实网关地址。
 
 import { lazyStream, type Provider } from "@earendil-works/pi-ai";
-import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getClaudeCodeSessionId } from "./claude-code-compat.ts";
 import { applyCodexRequestHeaders } from "./codex-compat.ts";
 import { mergeModelRequestHeaders, resolveClientHeaderProfile } from "./presets/client-headers.ts";
@@ -92,7 +91,7 @@ function wrapResponsesTerminalStream(response: Response): Response {
 	});
 }
 
-export function createProviderTransport(runtime: ModelRuntime, native: Provider, provider: StoredProvider): Provider {
+export function createProviderTransport(native: Provider, provider: StoredProvider): Provider {
 	const endpoints = new Map(provider.models.map((model) => {
 		const api = model.api ?? provider.api;
 		const baseUrl = resolveRuntimeBaseUrl(api as ApiKind, model.baseUrl ?? provider.baseUrl);
@@ -106,10 +105,8 @@ export function createProviderTransport(runtime: ModelRuntime, native: Provider,
 		const endpoint = endpoints.get(model.id);
 		if (!endpoint || endpoint.api !== model.api) throw new Error(t("请求模型不属于当前接入配置：{modelId}", { modelId: model.id }));
 		validateRequestBaseUrl(endpoint.baseUrl);
-		// [喵喵喵]: Pi 的模型级请求头解析属于 ModelRuntime，不包含在 getProvider() 返回值里；使用已解析的 key 只补齐本接入的显式配置。
-		const resolved = await runtime.getAuth(model, { apiKey: options?.apiKey, env: options?.env, signal: options?.signal });
-		if (!resolved) throw new Error(t("请求认证解析失败"));
-		options = { ...options, headers: mergeModelRequestHeaders(options?.headers, resolved.auth.headers) };
+		// [喵喵喵]: models.json 已保存完整模型头，由宿主在 transformHeaders 前解析；发送层不能再次合并配置而复活被删除的头。
+		options = { ...options };
 		// [喵喵喵]: models.json 会叠加在动态 provider 之上；还原用户侧 API 根地址，不能让原生持久化形式参与路径拼接。
 		const upstreamModel = { ...model, baseUrl: endpoint.baseUrl };
 		if (model.api === "google-generative-ai") {

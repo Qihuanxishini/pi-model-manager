@@ -270,6 +270,8 @@ test("atomicWriteText 未传 mode 时不强制权限，共享配置文件保持�
 });
 
 test("Codex 派生字段保存回读后仍为生成值，显式同值覆盖保留且禁用时不残留身份", async () => {
+	const { getClientHeadersForProfile } = await import("../presets/client-headers.ts");
+	const explicitVersion = getClientHeadersForProfile("codex-cli", "openai-responses", {})!.version!;
 	await writeFile(MODELS_JSON_PATH, jsonSource({ providers: { codex: {
 		api: "openai-responses", baseUrl: "https://fixture.test/v1", piModelManager: { managed: true },
 		models: [{ id: "provider-ua" }, { id: "model-ua" }, { id: "explicit-version" }],
@@ -281,13 +283,13 @@ test("Codex 派生字段保存回读后仍为生成值，显式同值覆盖保�
 		const provider = document.providers.codex!;
 		provider.headers = { "User-Agent": "codex_exec/0.166.0" };
 		provider.models[1]!.headers = { "user-agent": "codex-tui/0.167.0" };
-		provider.models[2]!.headers = { Version: "0.164.0" };
+		provider.models[2]!.headers = { Version: explicitVersion };
 		return { document, changedProviderIds: ["codex"], removedProviderIds: [] };
 	});
 	const reloaded = (await readState()).providers.codex!;
 	assert.equal(reloaded.models[0]!.headers, undefined);
 	assert.deepEqual(reloaded.models[1]!.headers, { "user-agent": "codex-tui/0.167.0" });
-	assert.deepEqual(reloaded.models[2]!.headers, { version: "0.164.0" });
+	assert.deepEqual(reloaded.models[2]!.headers, { version: explicitVersion });
 	await persistManagedConfiguration(ctx, (latest) => {
 		const document = structuredClone(latest);
 		document.providers.codex!.headers = { "user-agent": "codex_exec/0.168.0" };
@@ -299,7 +301,7 @@ test("Codex 派生字段保存回读后仍为生成值，显式同值覆盖保�
 	assert.equal(raw[0].headers.originator, "codex_exec");
 	assert.equal(raw[1].headers.version, "0.169.0");
 	assert.equal(raw[1].headers.originator, "codex-tui");
-	assert.equal(raw[2].headers.version, "0.164.0", "与旧模板同值的显式版本不能被剥离");
+	assert.equal(raw[2].headers.version, explicitVersion, "与旧模板同值的显式版本不能被剥离");
 	await persistManagedConfiguration(ctx, (latest) => {
 		const document = structuredClone(latest);
 		document.providers.codex!.clientHeaderProfile = "disabled";
@@ -310,7 +312,7 @@ test("Codex 派生字段保存回读后仍为生成值，显式同值覆盖保�
 	assert.equal(disabled[0].headers.originator, undefined);
 	assert.equal(disabled[1].headers.version, undefined);
 	assert.equal(disabled[1].headers.originator, undefined);
-	assert.equal(disabled[2].headers.version, "0.164.0");
+	assert.equal(disabled[2].headers.version, explicitVersion);
 });
 
 test("过期编辑器创建和重命名发生重名时，锁内拒绝且不覆盖双文件", async () => {
@@ -344,4 +346,42 @@ test("过期编辑器创建和重命名发生重名时，锁内拒绝且不覆�
 	assert.equal(await readFile(MODELS_JSON_PATH, "utf8"), modelsSource);
 	assert.equal(await readFile(STATE_PATH, "utf8"), metadataSource);
 	assert.equal(await pathExists(transactionPath), false);
+});
+
+test("未列 models 的原生接入仍占用 ID，新建两种入口均拒写", async () => {
+	const { createEmptyState } = await import("../state-store.ts");
+	const { createProviderDraft, createModelDraftForStoredProvider } = await import("../state-document.ts");
+	const { saveProviderConfiguration, saveNewProviderWithModelConfiguration } = await import("../model-mutations.ts");
+	const modelsSource = jsonSource({ providers: { reserved: { headers: { "x-existing": "keep" }, modelOverrides: { original: { contextWindow: 32000 } } } } });
+	const metadataSource = jsonSource({ version: 5, managedProviderIds: [], providers: {}, models: {}, requestHeaderProfiles: {}, clientHeaderCaptures: {} });
+	await writeFile(MODELS_JSON_PATH, modelsSource);
+	await writeFile(STATE_PATH, metadataSource);
+	const latest = await readState();
+	assert.equal(latest.providers.reserved, undefined, "原生覆盖节点不会出现在可编辑目录");
+	const draft = { ...createProviderDraft(), providerId: "reserved", baseUrl: "https://fixture.test/v1", apiKey: "fixture-key" };
+	const model = { ...createModelDraftForStoredProvider("reserved", { api: draft.api, baseUrl: draft.baseUrl, managed: true, models: [] }), modelId: "new-model" };
+	const ctx = { modelRegistry: { async refresh() { assert.fail("拒写不得刷新 registry"); } } } as any;
+	await assert.rejects(saveProviderConfiguration({} as any, ctx, createEmptyState(), draft, undefined), /models.json 中已存在接入/);
+	await assert.rejects(saveNewProviderWithModelConfiguration({} as any, ctx, createEmptyState(), draft, model), /models.json 中已存在接入/);
+	assert.equal(await readFile(MODELS_JSON_PATH, "utf8"), modelsSource);
+	assert.equal(await readFile(STATE_PATH, "utf8"), metadataSource);
+	assert.equal(await pathExists(transactionPath), false);
+});
+
+test("providers 类型损坏拒绝事务且保留原文，字段缺失仍允许初始化", async () => {
+	const metadataSource = jsonSource({ version: 5, managedProviderIds: [], providers: {}, models: {}, requestHeaderProfiles: {}, clientHeaderCaptures: {} });
+	await writeFile(STATE_PATH, metadataSource);
+	const ctx = { modelRegistry: { async refresh() {} } } as any;
+	for (const providers of [null, [{ id: "keep" }], "keep", false, 7]) {
+		const source = jsonSource({ providers, rootExtension: "keep" });
+		await writeFile(MODELS_JSON_PATH, source);
+		await assert.rejects(persistManagedConfiguration(ctx, () => assert.fail("损坏配置不得进入 mutation")), /models.json.providers.*对象/);
+		assert.equal(await readFile(MODELS_JSON_PATH, "utf8"), source);
+		assert.equal(await readFile(STATE_PATH, "utf8"), metadataSource);
+		assert.equal(await pathExists(transactionPath), false);
+	}
+	await writeFile(MODELS_JSON_PATH, jsonSource({ rootExtension: "keep" }));
+	await persistManagedConfiguration(ctx, (latest) => ({ document: latest, changedProviderIds: [], removedProviderIds: [] }));
+	assert.deepEqual((await readState()).providers, {});
+	assert.equal(JSON.parse(await readFile(MODELS_JSON_PATH, "utf8")).rootExtension, "keep");
 });

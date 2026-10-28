@@ -232,7 +232,14 @@ async function persistConfigurationInsideLock(
 	const migratedSource = metadataSnapshot.metadata.version < 5
 		? migrateManagedBaseUrls(latest, sourceWithLegacyProviders)
 		: sourceWithLegacyProviders;
+	const existingProviderIds = new Set(Object.keys(latest.providers));
 	const change = prepare(latest);
+	// [喵喵喵]: 原生扩展可只保存覆盖项而不列 models；目录过滤掉的节点仍占用 ID，不允许新建时覆盖。
+	for (const providerId of change.changedProviderIds) {
+		if (!existingProviderIds.has(providerId) && Object.hasOwn(modelsSnapshot.document.providers, providerId)) {
+			throw new Error(t("models.json 中已存在接入：{providerId}", { providerId }));
+		}
+	}
 	const nextModels = mutateModels(migratedSource, change);
 	const modelsTarget = nextModels === modelsSnapshot.document && modelsSnapshot.source !== undefined
 		? modelsSnapshot.source

@@ -45,7 +45,7 @@ async function buildNativeProvider(providerId: string, provider: StoredProvider,
 	runtime.registerProvider(providerId, config);
 	const native = runtime.getProvider(providerId);
 	if (!native) throw new Error(t("无法构建接入：{providerId}", { providerId }));
-	return createProviderTransport(runtime, native, provider);
+	return createProviderTransport(native, provider);
 }
 
 function asManagedApi(value: string | undefined, fallback: ApiKind): ApiKind {

@@ -93,3 +93,39 @@ test("真实 Pi：四协议发现保留端点和显式头，失败不猜地址�
 		await new Promise<void>((resolve) => server.close(() => resolve()));
 	}
 });
+
+test("真实 Pi：直连模型发现的重定向不会向其他 Origin 发送 API key", { skip: !realRuntime, timeout: 10_000 }, async () => {
+	let targetRequests = 0;
+	const target = createServer((_req, res) => { targetRequests++; res.end('{"data":[]}'); });
+	target.listen(0, "127.0.0.1");
+	await once(target, "listening");
+	const targetUrl = `http://127.0.0.1:${(target.address() as any).port}/models`;
+	let status = 302;
+	const sourceHeaders: Record<string, unknown>[] = [];
+	const source = createServer((req, res) => {
+		sourceHeaders.push({ ...req.headers });
+		res.writeHead(status, { location: targetUrl });
+		res.end("fixture redirect");
+	});
+	source.listen(0, "127.0.0.1");
+	await once(source, "listening");
+	try {
+		for (const api of ["anthropic-messages", "google-generative-ai"] as ApiKind[]) {
+			for (status of [301, 302, 303, 307, 308]) {
+				const result = await fetchModelIds({ providerId: "redirect-fixture", api,
+					baseUrl: `http://127.0.0.1:${(source.address() as any).port}/v1`, apiKey: "fixture-only-key",
+					clientHeaderProfile: "disabled", customClientHeaders: {}, httpProxyEnabled: false, httpProxyUrl: "",
+				});
+				assert.equal(result.status, "failed");
+				if (result.status === "failed") assert.match(result.message, new RegExp(`HTTP ${status}`));
+				assert.equal(sourceHeaders.at(-1)![api === "anthropic-messages" ? "x-api-key" : "x-goog-api-key"], "fixture-only-key");
+				assert.equal(targetRequests, 0, "重定向目标不得收到任何请求");
+			}
+		}
+	} finally {
+		for (const server of [source, target]) {
+			server.closeAllConnections();
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+		}
+	}
+});

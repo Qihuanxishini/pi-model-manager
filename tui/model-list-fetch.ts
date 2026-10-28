@@ -140,11 +140,11 @@ async function requestModelIds(
 		temporaryProxyRoute = proxyConfig
 			? await openProxyRouteWithSignal(proxyConfig, url, signal)
 			: undefined;
-		// [喵喵喵]: 经由本地代理时强制禁止自动跟随 3xx 重定向，防止直连上游泄露 IP
+		// [喵喵喵]: 直连也不能自动跳转；fetch 跨域只会剥离部分标准认证头，不会剥离 x-api-key / x-goog-api-key。
 		const response = await fetch(temporaryProxyRoute?.url ?? url, {
 			headers,
 			signal,
-			redirect: temporaryProxyRoute ? "manual" : "follow",
+			redirect: "manual",
 		});
 		const text = await readBoundedResponseText(response, signal);
 		if (!response.ok) {

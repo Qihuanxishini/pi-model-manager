@@ -37,9 +37,8 @@ test("Responses 兼容模式在正式终态事件后完成并取消未关闭上�
 		result: async () => (await options.fetch("http://gateway.invalid/v1/responses")).text(),
 	});
 	const native = { id: "terminal-wire", name: "Wire fixture", api: "openai-responses", models: [], stream: consume, streamSimple: consume } as any;
-	const runtime = { getAuth: async () => ({ auth: { headers: {} } }) } as any;
 	const compatible = { ...provider, openAIResponsesStreamCompletionMode: "terminal-event" as const };
-	const transport = createProviderTransport(runtime, native, compatible);
+	const transport = createProviderTransport(native, compatible);
 	const output = await transport.streamSimple({ ...compatible.models[0], api: "openai-responses", baseUrl: compatible.baseUrl } as any, {} as any, { fetch: async () => upstream }).result();
 	assert.equal(output, frames.join(""));
 	await upstreamCancelled.promise;
@@ -65,8 +64,7 @@ test("Responses 标准模式仍等待上游流结束", { timeout: 5_000 }, async
 		result: async () => (await options.fetch("http://gateway.invalid/v1/responses")).text(),
 	});
 	const native = { id: "standard-wire", name: "Wire fixture", api: "openai-responses", models: [], stream: consume, streamSimple: consume } as any;
-	const runtime = { getAuth: async () => ({ auth: { headers: {} } }) } as any;
-	const transport = createProviderTransport(runtime, native, provider);
+	const transport = createProviderTransport(native, provider);
 	const pending = transport.streamSimple({ ...provider.models[0], api: "openai-responses", baseUrl: provider.baseUrl } as any, {} as any, { fetch: async () => upstream }).result();
 	await terminalSent.promise;
 	assert.equal(await Promise.race([pending.then(() => "done"), new Promise((resolve) => setTimeout(() => resolve("waiting"), 50))]), "waiting");

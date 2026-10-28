@@ -98,7 +98,11 @@ function createEmpty(): ModelsJsonDocument {
 function parseModelsJson(source: string): ModelsJsonDocument {
 	const parsed = JSON.parse(stripJsonNoise(source));
 	if (!isObjectRecord(parsed)) throw new Error(t("models.json 根节点必须是对象"));
-	const providers = isObjectRecord(parsed.providers) ? parsed.providers : {};
+	// [喵喵喵]: 字段缺失可以初始化；已有字段类型损坏必须拒写，不能把原始内容当空目录覆盖。
+	if (Object.hasOwn(parsed, "providers") && !isObjectRecord(parsed.providers)) {
+		throw new Error(t("{path} 必须是对象", { path: "models.json.providers" }));
+	}
+	const providers = parsed.providers ?? {};
 	return { ...parsed, providers: providers as Record<string, ModelsJsonProviderEntry> };
 }
 
