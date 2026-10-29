@@ -131,6 +131,7 @@ Ctrl+S 保存并启用模型；不切换当前会话模型
 - Choose Pi's standard default behavior or a `system`-role compatibility mode for OpenAI Chat providers.
 - Fetch model IDs from compatible upstream APIs or enter them manually.
 - Configure context window, maximum output, vision support, and reasoning support.
+- Set a per-model compaction reserve from the model editor (written to Pi's global `settings.json`).
 - Choose Anthropic Adaptive Thinking or Legacy Thinking.
 - Select Standard, Fast (`priority`), or Ultrafast (`ultrafast`) service tiers per OpenAI Responses model.
 - Route each provider directly or through its own HTTP(S) proxy.

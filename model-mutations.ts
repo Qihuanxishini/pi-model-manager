@@ -4,6 +4,12 @@
 // Pi runtime provider 注册同步、enabledModels 同步和模型救援；TUI 只负责收集用户意图。
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import {
+	moveModelCompactionOverrides,
+	removeModelCompactionOverrides,
+	resolveCompactionReserveChoice,
+	saveModelCompactionOverride,
+} from "./compaction-settings.ts";
 import { formatUnknownError } from "./common.ts";
 import { isBuiltinProviderId } from "./builtin-model-catalog.ts";
 import { t } from "./i18n.ts";
@@ -61,6 +67,62 @@ async function notifyModelAvailability(
 		}
 	} catch (error) {
 		ctx.ui.notify(t("已保存模型 {fullId}，但启用同步/校验失败：{error}", { fullId, error: formatUnknownError(error) }), "warning");
+	}
+}
+
+// [喵喵喵]: 压缩预留存在 Pi 全局 settings.json（compaction.modelOverrides），
+// 与 models.json 事务无关；写失败只警告，不回滚已经生效的模型配置。
+async function persistModelCompactionReserve(
+	ctx: ExtensionCommandContext,
+	draft: ModelDraft,
+	fullModelId: string,
+	staleFullModelIds: readonly string[] = [],
+): Promise<void> {
+	if (draft.compactionReserveWritable === false) return;
+	const reserveTokens = resolveCompactionReserveChoice(draft.compactionReserve ?? "global", draft.contextWindow);
+	try {
+		const changed = await saveModelCompactionOverride({ fullModelId, reserveTokens, staleFullModelIds });
+		if (!changed) return;
+		if (reserveTokens === undefined) {
+			ctx.ui.notify(t("已清除 {fullModelId} 的压缩预留覆盖；/reload 或重启 Pi 后生效", { fullModelId }), "info");
+			return;
+		}
+		ctx.ui.notify(
+			t("已设置 {fullModelId} 的压缩预留为 {tokens}；/reload 或重启 Pi 后生效", { fullModelId, tokens: reserveTokens }),
+			"info",
+		);
+	} catch (error) {
+		ctx.ui.notify(t("模型已保存，但压缩预留写入失败：{error}", { error: formatUnknownError(error) }), "warning");
+	}
+}
+
+async function clearModelCompactionOverrides(
+	ctx: ExtensionCommandContext,
+	fullModelIds: readonly string[],
+): Promise<void> {
+	try {
+		if (!(await removeModelCompactionOverrides(fullModelIds))) return;
+		ctx.ui.notify(t("已清理压缩预留覆盖"), "info");
+	} catch (error) {
+		ctx.ui.notify(t("压缩预留清理失败：{error}", { error: formatUnknownError(error) }), "warning");
+	}
+}
+
+async function moveProviderCompactionOverrides(
+	ctx: ExtensionCommandContext,
+	oldProviderId: string,
+	newProviderId: string,
+	provider: StoredProvider,
+): Promise<void> {
+	const moves = provider.models.map((model) => ({
+		from: getModelFullId(oldProviderId, model.id),
+		to: getModelFullId(newProviderId, model.id),
+	}));
+	try {
+		if (!(await moveModelCompactionOverrides(moves))) return;
+		ctx.ui.notify(t("已迁移压缩预留覆盖"), "info");
+	} catch (error) {
+		ctx.ui.notify(t("压缩预留迁移失败：{error}", { error: formatUnknownError(error) }), "warning");
 	}
 }
 
@@ -126,6 +188,7 @@ export async function saveProviderConfiguration(
 		} catch (error) {
 			ctx.ui.notify(t("接入已保存，但 enabledModels 同步失败：{error}", { error: formatUnknownError(error) }), "warning");
 		}
+		await moveProviderCompactionOverrides(ctx, oldProviderId, draft.providerId, stored);
 		await withModelRescue(ctx, pi, { providerId: oldProviderId }, {
 			reason: t("接入 {oldProviderId} 已重命名为 {providerId}", { oldProviderId, providerId: draft.providerId }),
 			preferred: renamedCurrentModelId
@@ -163,6 +226,7 @@ export async function saveModelConfiguration(
 	await reconcilePersistedProviderRuntime(pi, draft.providerId, stored, nextState);
 	const newFullId = getModelFullId(draft.providerId, newModelId);
 	await notifyModelAvailability(ctx, draft.providerId, newModelId, oldFullId);
+	await persistModelCompactionReserve(ctx, draft, newFullId, oldFullId ? [oldFullId] : []);
 
 	if (oldFullId && replacedModelId) {
 		await withModelRescue(
@@ -198,13 +262,14 @@ export async function saveNewProviderWithModelConfiguration(
 	const stored = nextState.providers[providerDraft.providerId]!;
 	await reconcilePersistedProviderRuntime(pi, providerDraft.providerId, stored, nextState);
 	await notifyModelAvailability(ctx, providerDraft.providerId, modelDraft.modelId.trim(), undefined, t("已创建并启用模型"));
+	await persistModelCompactionReserve(ctx, modelDraft, getModelFullId(providerDraft.providerId, modelDraft.modelId.trim()));
 }
 
 export async function deleteProviderConfiguration(
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
 	providerId: string,
-	_provider: StoredProvider,
+	provider: StoredProvider,
 ): Promise<void> {
 	await assertProviderIsEditable(providerId);
 	await persistManagedConfiguration(ctx, (latest) => ({
@@ -219,6 +284,7 @@ export async function deleteProviderConfiguration(
 	}
 	unregisterManagedProvider(pi, providerId);
 	ctx.ui.notify(t("已删除接入 {providerId}", { providerId }), "info");
+	await clearModelCompactionOverrides(ctx, provider.models.map((model) => getModelFullId(providerId, model.id)));
 	await withModelRescue(ctx, pi, { providerId }, { reason: t("接入 {providerId} 已删除", { providerId }) });
 }
 
@@ -250,5 +316,6 @@ export async function deleteModelConfiguration(
 	if (stored) await reconcilePersistedProviderRuntime(pi, providerId, stored, nextState);
 	else unregisterManagedProvider(pi, providerId);
 	ctx.ui.notify(t("已删除模型 {fullId}", { fullId }), "info");
+	await clearModelCompactionOverrides(ctx, [fullId]);
 	await withModelRescue(ctx, pi, { providerId, modelId }, { reason: t("模型 {fullId} 已删除", { fullId }) });
 }

@@ -11,6 +11,7 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { formatUnknownError } from "../common.ts";
+import { DEFAULT_COMPACTION_RESERVE_TOKENS, readCompactionSettings, resolveAutoCompactionReserve } from "../compaction-settings.ts";
 import { getUiLanguage, setUiLanguage, t, type UiLanguage } from "../i18n.ts";
 import { writeUiLanguage } from "../ui-language-settings.ts";
 import {
@@ -34,7 +35,7 @@ import {
 } from "../state-document.ts";
 import { readState } from "../state-store.ts";
 import { getBuiltinProviderIds } from "../builtin-model-catalog.ts";
-import type { StateDocument, StoredModel, StoredProvider } from "../types.ts";
+import type { ModelDraft, StateDocument, StoredModel, StoredProvider } from "../types.ts";
 import { editModel } from "./editor-model.ts";
 import { editProvider } from "./editor-provider.ts";
 import { showOptionPicker, showPersistentShortcutMenu, type MenuCursor } from "./persistent-menu.ts";
@@ -233,6 +234,37 @@ async function deleteModel(pi: ExtensionAPI, ctx: ExtensionCommandContext, provi
 
 type ProviderShortcut = "add-model" | "edit-provider" | "delete-model";
 
+// [喵喵喵]: 压缩预留保存在 Pi 的 settings.json，不在 models.json；
+// 打开模型编辑器时先读回已有覆盖，否则保存会把用户之前设的值当成“跟随全局”清掉。
+// 返回值是全局预留，供编辑器显示 global 档位的实际 token。
+async function loadCompactionDraftState(
+	ctx: ExtensionCommandContext,
+	draft: ModelDraft,
+	fullModelId?: string,
+): Promise<number> {
+	try {
+		const snapshot = await readCompactionSettings(ctx.cwd);
+		for (const warning of snapshot.warnings) ctx.ui.notify(`[pi-model-manager] ${warning}`, "warning");
+		draft.compactionReserveWritable = true;
+		if (fullModelId) {
+			const stored = snapshot.modelOverrides[fullModelId]?.reserveTokens;
+			// 存下来的值正好是 12% 公式的结果，就继续按 auto 处理：改上下文窗口时跟着变。
+			draft.compactionReserve = stored === undefined
+				? "global"
+				: stored === resolveAutoCompactionReserve(draft.contextWindow) ? "auto" : stored;
+		} else {
+			// 新建模型默认按上下文窗口 12% 预留（不低于 16K）。
+			draft.compactionReserve = "auto";
+		}
+		return snapshot.reserveTokens;
+	} catch (error) {
+		// 读不到就不写：保留 undefined 但禁用写入，避免误删已有覆盖。
+		draft.compactionReserveWritable = false;
+		ctx.ui.notify(t("读取压缩设置失败，本次不会修改压缩预留：{error}", { error: formatUnknownError(error) }), "warning");
+		return DEFAULT_COMPACTION_RESERVE_TOKENS;
+	}
+}
+
 async function editStoredModel(
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
@@ -248,9 +280,17 @@ async function editStoredModel(
 		return false;
 	}
 	const draft = createModelDraftFromStoredModel(providerId, provider, model);
+	const inheritedCompactionReserve = await loadCompactionDraftState(ctx, draft, getModelFullId(providerId, modelId));
 	// [喵喵喵]: 保存失败时保留草稿继续编辑，防止用户修改的 contextWindow/maxTokens 等配置丢失
 	while (true) {
-		const outcome = await editModel(ctx, draft, t("编辑模型 {fullId}", { fullId: getModelFullId(providerId, modelId) }), requestHeaderProfiles, clientHeaderCaptures);
+		const outcome = await editModel(
+			ctx,
+			draft,
+			t("编辑模型 {fullId}", { fullId: getModelFullId(providerId, modelId) }),
+			requestHeaderProfiles,
+			clientHeaderCaptures,
+			inheritedCompactionReserve,
+		);
 		if (outcome.action !== "save") return false;
 		const saved = await saveModelDraft(pi, ctx, outcome.draft, modelId);
 		if (saved) return true;
@@ -305,9 +345,17 @@ async function showProviderMenu(pi: ExtensionAPI, ctx: ExtensionCommandContext, 
 		if (action.type === "shortcut") {
 			if (action.shortcut === "add-model") {
 				const draft = createModelDraftForStoredProvider(providerId, currentProvider);
+				const inheritedCompactionReserve = await loadCompactionDraftState(ctx, draft);
 				// [喵喵喵]: 新增模型校验或保存失败时保留草稿
 				while (true) {
-					const outcome = await editModel(ctx, draft, t("添加模型到 {providerId}", { providerId }), state.requestHeaderProfiles, state.clientHeaderCaptures);
+					const outcome = await editModel(
+						ctx,
+						draft,
+						t("添加模型到 {providerId}", { providerId }),
+						state.requestHeaderProfiles,
+						state.clientHeaderCaptures,
+						inheritedCompactionReserve,
+					);
 					if (outcome.action !== "save") break;
 					const saved = await saveModelDraft(pi, ctx, outcome.draft, undefined);
 					if (saved) break;
@@ -365,8 +413,16 @@ async function createProviderAndModel(pi: ExtensionAPI, ctx: ExtensionCommandCon
 		const stored = stagedState.providers[providerOutcome.draft.providerId]!;
 		ctx.ui.notify(t("请继续添加第一个模型；取消模型编辑则不会创建该接入。"), "info");
 		const modelDraft = createModelDraftForStoredProvider(providerOutcome.draft.providerId, stored);
+		const inheritedCompactionReserve = await loadCompactionDraftState(ctx, modelDraft);
 		while (true) {
-			const modelOutcome = await editModel(ctx, modelDraft, t("添加模型到 {providerId}", { providerId: providerOutcome.draft.providerId }), stagedState.requestHeaderProfiles, stagedState.clientHeaderCaptures);
+			const modelOutcome = await editModel(
+				ctx,
+				modelDraft,
+				t("添加模型到 {providerId}", { providerId: providerOutcome.draft.providerId }),
+				stagedState.requestHeaderProfiles,
+				stagedState.clientHeaderCaptures,
+				inheritedCompactionReserve,
+			);
 			if (modelOutcome.action !== "save") return false;
 			const saved = await saveNewProviderAndModelDraft(pi, ctx, providerOutcome.draft, modelOutcome.draft);
 			if (saved) return true;

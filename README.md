@@ -131,6 +131,7 @@ Ctrl+S 保存并启用模型；不切换当前会话模型
 - 为 OpenAI Chat 接入提供标准 Pi 默认行为与 `system` role 兼容模式。
 - 从兼容上游拉取模型 ID，也可手动填写模型。
 - 配置上下文窗口、最大输出、视觉支持和 Thinking。
+- 在模型编辑器里配置每个模型的上下文压缩预留（写入 Pi 全局 `settings.json`）。
 - 支持 Anthropic Adaptive Thinking 与 Legacy Thinking。
 - 为 OpenAI Responses 模型选择标准、Fast（`priority`）或 Ultrafast（`ultrafast`）速度档位。
 - 为每个接入单独配置直连或 HTTP(S) 代理。

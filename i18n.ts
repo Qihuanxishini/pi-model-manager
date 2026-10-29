@@ -412,6 +412,30 @@ const ENGLISH_MESSAGES = {
 	"上游模型 ID 包含控制字符或终端转义序列，已拒绝显示": "An upstream model ID contains control characters or terminal escape sequences and was rejected",
 	"上游返回 {count} 个模型，超过上限 {maxCount}": "The upstream returned {count} models, exceeding the limit of {maxCount}",
 	"模型列表响应体超过 {maxBytes} 字节上限": "The model-list response exceeds the {maxBytes}-byte limit",
+
+	// ===== 上下文压缩（settings.json compaction） =====
+	"压缩预留": "Compaction reserve",
+	"{tokens} · 全局": "{tokens} · global",
+	"{tokens} · auto": "{tokens} · auto",
+	"{label} token（当前：{current}，支持 200k / 1m 写法；留空跟随全局设置）": "{label} tokens (current: {current}; accepts 200k / 1m; leave empty to follow the global setting)",
+	"{label} 必须是非负整数": "{label} must be a non-negative integer",
+	"压缩预留必须是非负整数": "Compaction reserve must be a non-negative integer",
+	"压缩阈值 {threshold} = 上下文 {context} − 预留 {reserve}": "Compaction threshold {threshold} = context {context} − reserve {reserve}",
+	"项目 {path} 也声明了 compaction，Pi 会让项目设置盖住这里写入的压缩预留": "The project file {path} also declares compaction; Pi lets project settings override the reserve written here",
+	"读取压缩设置失败，本次不会修改压缩预留：{error}": "Failed to read compaction settings; the compaction reserve will not be modified: {error}",
+	"已设置 {fullModelId} 的压缩预留为 {tokens}；/reload 或重启 Pi 后生效": "Set the compaction reserve for {fullModelId} to {tokens}; run /reload or restart Pi to apply",
+	"已清除 {fullModelId} 的压缩预留覆盖；/reload 或重启 Pi 后生效": "Removed the compaction reserve override for {fullModelId}; run /reload or restart Pi to apply",
+	"模型已保存，但压缩预留写入失败：{error}": "The model was saved, but writing the compaction reserve failed: {error}",
+	"已清理压缩预留覆盖": "Removed compaction reserve overrides",
+	"压缩预留清理失败：{error}": "Failed to remove compaction reserve overrides: {error}",
+	"已迁移压缩预留覆盖": "Moved compaction reserve overrides",
+	"压缩预留迁移失败：{error}": "Failed to move compaction reserve overrides: {error}",
+	"{path} 不是有效的 JSON：{error}": "{path} is not valid JSON: {error}",
+	"{path} 的 compaction 必须是对象": "{path}: compaction must be an object",
+	"{path} 的 compaction.reserveTokens 必须是非负整数": "{path}: compaction.reserveTokens must be a non-negative integer",
+	"{path} 的 compaction.modelOverrides 必须是对象": "{path}: compaction.modelOverrides must be an object",
+	"{path} 的 compaction.modelOverrides.{fullModelId} 必须是对象": "{path}: compaction.modelOverrides.{fullModelId} must be an object",
+	"{path} 已被未遵守 Pi 文件锁的编辑器修改；已取消写入，请重试。": "{path} was modified by an editor that did not honor Pi's file lock; the write was cancelled. Try again.",
 } as const;
 
 export type MessageKey = keyof typeof ENGLISH_MESSAGES;

@@ -7,9 +7,10 @@
 //   - 视觉支持用开关式 select，保存时仍映射为 text / text,image
 
 import { BorderedLoader, type ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_COMPACTION_RESERVE_TOKENS, resolveAutoCompactionReserve, resolveCompactionReserveChoice } from "../compaction-settings.ts";
 import { t } from "../i18n.ts";
 import { resolveProviderCustomHeaders } from "../presets/client-headers.ts";
-import type { AnthropicThinkingProtocol, BuiltInClientHeaderProfileId, ModelDraft, ModelListFetchOutcome, ReasoningMode, StoredClientHeaderCapture, StoredRequestHeaderProfile } from "../types.ts";
+import type { AnthropicThinkingProtocol, BuiltInClientHeaderProfileId, CompactionReserveChoice, ModelDraft, ModelListFetchOutcome, ReasoningMode, StoredClientHeaderCapture, StoredRequestHeaderProfile } from "../types.ts";
 import { fetchModelIds } from "./model-list-fetch.ts";
 import { pickModelIdFromList } from "./model-picker.ts";
 import { showOptionPicker, showPersistentFormMenu, padLabel, markAdjustableValue, type MenuCursor, type HorizontalDirection } from "./persistent-menu.ts";
@@ -71,6 +72,31 @@ export const MAX_TOKENS_PRESETS: readonly number[] = [
 	128_000,
 ];
 
+// [喵喵喵]: 压缩预留的固定档位。预留越大，自动压缩越早发生。
+export const COMPACTION_RESERVE_PRESETS: readonly number[] = [
+	16_384,
+	32_768,
+	65_536,
+	131_072,
+	200_000,
+];
+
+// 档位序列：全局（不写模型级覆盖）→ auto（按上下文窗口算）→ 固定 token。
+// auto 是档位而不是数值，所以改上下文窗口时预留天然跟着变，不需要额外重算。
+const COMPACTION_RESERVE_STOPS: readonly CompactionReserveChoice[] = ["global", "auto", ...COMPACTION_RESERVE_PRESETS];
+
+function cycleCompactionReserve(draft: ModelDraft, direction: HorizontalDirection): void {
+	const current = draft.compactionReserve ?? "global";
+	const index = COMPACTION_RESERVE_STOPS.indexOf(current);
+	if (index >= 0) {
+		const offset = direction === "left" ? -1 : 1;
+		draft.compactionReserve = COMPACTION_RESERVE_STOPS[(index + offset + COMPACTION_RESERVE_STOPS.length) % COMPACTION_RESERVE_STOPS.length]!;
+		return;
+	}
+	// 手填值不在档位上：按数值吸附到相邻固定档位，与上下文窗口/输出上限的手感一致。
+	draft.compactionReserve = cycleNumericPreset(current as number, COMPACTION_RESERVE_PRESETS, direction);
+}
+
 export function cycleNumericPreset(
 	current: number,
 	presets: readonly number[],
@@ -109,6 +135,14 @@ export function parsePositiveIntegerWithUnit(rawInput: string): number | undefin
 	return Math.round(num);
 }
 
+// [喵喵喵]: Pi 允许 reserveTokens = 0（上下文写满就压缩），所以这里不能直接复用
+// parsePositiveIntegerWithUnit 的 num > 0 限制。
+export function parseNonNegativeTokenCount(rawInput: string): number | undefined {
+	if (rawInput.trim() === "0") return 0;
+	const parsed = parsePositiveIntegerWithUnit(rawInput);
+	return parsed !== undefined && parsed > 0 ? parsed : undefined;
+}
+
 // 开关字段在两个方向上取反；档位字段按 direction 在选项间步进。
 function applyHorizontalToggle(draft: ModelDraft, fieldId: string, direction: HorizontalDirection): boolean {
 	if (fieldId === "visionInput") {
@@ -138,10 +172,22 @@ function applyHorizontalToggle(draft: ModelDraft, fieldId: string, direction: Ho
 		draft.maxTokens = cycleNumericPreset(draft.maxTokens, MAX_TOKENS_PRESETS, direction);
 		return true;
 	}
+	if (fieldId === "compactionReserve") {
+		cycleCompactionReserve(draft, direction);
+		return true;
+	}
 	return false;
 }
 
-function buildRows(draft: ModelDraft): FieldRow[] {
+function describeCompactionReserve(draft: ModelDraft, inheritedCompactionReserve: number): string {
+	const choice = draft.compactionReserve ?? "global";
+	if (choice === "global") return t("{tokens} · 全局", { tokens: inheritedCompactionReserve });
+	// auto 和固定值都可能算出同样的 token，标出档位才能区分。
+	if (choice === "auto") return t("{tokens} · auto", { tokens: resolveAutoCompactionReserve(draft.contextWindow) });
+	return String(choice);
+}
+
+function buildRows(draft: ModelDraft, inheritedCompactionReserve: number): FieldRow[] {
 	const rows: FieldRow[] = [
 		{ id: "modelId", label: t("模型 ID"), value: draft.modelId || t("<未填写>") },
 		{ id: "fetch", label: t("重新拉取"), value: t("上游模型列表") },
@@ -163,6 +209,12 @@ function buildRows(draft: ModelDraft): FieldRow[] {
 	rows.push(
 		{ id: "contextWindow", label: t("上下文窗口"), value: String(draft.contextWindow), adjustable: true },
 		{ id: "maxTokens", label: t("最大输出"), value: String(draft.maxTokens), adjustable: true },
+		{
+			id: "compactionReserve",
+			label: t("压缩预留"),
+			value: describeCompactionReserve(draft, inheritedCompactionReserve),
+			adjustable: true,
+		},
 	);
 	return rows;
 }
@@ -245,12 +297,41 @@ async function editIntField(ctx: ExtensionCommandContext, draft: ModelDraft, fie
 	draft[field] = parsed;
 }
 
+// [喵喵喵]: 压缩预留不属于 models.json，而是 Pi 的 settings.json；
+// 这里只改草稿，保存时随模型一起写入。
+async function editCompactionReserve(
+	ctx: ExtensionCommandContext,
+	draft: ModelDraft,
+	inheritedCompactionReserve: number,
+): Promise<void> {
+	const current = resolveCompactionReserveChoice(draft.compactionReserve ?? "global", draft.contextWindow)
+		?? inheritedCompactionReserve;
+	const label = t("压缩预留");
+	const value = await ctx.ui.input(
+		t("{label} token（当前：{current}，支持 200k / 1m 写法；留空跟随全局设置）", { label, current }),
+		String(current),
+	);
+	if (value === undefined) return;
+	const trimmed = value.trim();
+	if (!trimmed) {
+		draft.compactionReserve = "global";
+		return;
+	}
+	const parsed = parseNonNegativeTokenCount(trimmed);
+	if (parsed === undefined) {
+		ctx.ui.notify(t("{label} 必须是非负整数", { label }), "warning");
+		return;
+	}
+	draft.compactionReserve = parsed;
+}
+
 async function editField(
 	ctx: ExtensionCommandContext,
 	draft: ModelDraft,
 	fieldId: string,
 	requestHeaderProfiles: Record<string, StoredRequestHeaderProfile>,
 	clientHeaderCaptures: Partial<Record<BuiltInClientHeaderProfileId, StoredClientHeaderCapture>>,
+	inheritedCompactionReserve: number,
 ): Promise<void> {
 	if (fieldId === "modelId") {
 		const value = await ctx.ui.input(t("模型 ID（当前：{current}，传给上游 API 的模型字段）", { current: draft.modelId || t("<空>") }), draft.modelId);
@@ -323,6 +404,10 @@ async function editField(
 	}
 	if (fieldId === "contextWindow" || fieldId === "maxTokens") {
 		await editIntField(ctx, draft, fieldId);
+		return;
+	}
+	if (fieldId === "compactionReserve") {
+		await editCompactionReserve(ctx, draft, inheritedCompactionReserve);
 	}
 }
 
@@ -330,12 +415,25 @@ export type ModelEditOutcome =
 	| { action: "save"; draft: ModelDraft }
 	| { action: "cancel" };
 
+function formatCompactionThreshold(draft: ModelDraft, inheritedCompactionReserve: number): string {
+	const reserve = resolveCompactionReserveChoice(draft.compactionReserve ?? "global", draft.contextWindow)
+		?? inheritedCompactionReserve;
+	return t("压缩阈值 {threshold} = 上下文 {context} − 预留 {reserve}", {
+		threshold: Math.max(0, draft.contextWindow - reserve),
+		context: draft.contextWindow,
+		reserve,
+	});
+}
+
 export async function editModel(
 	ctx: ExtensionCommandContext,
 	draft: ModelDraft,
 	titlePrefix: string,
 	requestHeaderProfiles: Record<string, StoredRequestHeaderProfile> = {},
 	clientHeaderCaptures: Partial<Record<BuiltInClientHeaderProfileId, StoredClientHeaderCapture>> = {},
+	// [喵喵喵]: 继承值由调用方（dashboard）读好传入，编辑器不在首帧前做文件 I/O，
+	// 保证菜单在对话框打开的同一次微任务里就能压入屏幕宿主。
+	inheritedCompactionReserve: number = DEFAULT_COMPACTION_RESERVE_TOKENS,
 ): Promise<ModelEditOutcome> {
 	if (!draft.modelId.trim()) {
 		await pickModelFromUpstream(ctx, draft, requestHeaderProfiles, clientHeaderCaptures);
@@ -348,7 +446,7 @@ export async function editModel(
 			label: `${padLabel(row.label, 16)}${row.adjustable ? markAdjustableValue(row.value) : row.value}`,
 			adjustable: row.adjustable,
 		}));
-		const rows = buildRows(draft);
+		const rows = buildRows(draft, inheritedCompactionReserve);
 		const menuRows = toMenuRows(rows);
 		const action = await showPersistentFormMenu(
 			ctx,
@@ -357,13 +455,15 @@ export async function editModel(
 			menuRows,
 			cursor,
 			{
-				summaryLines: [
+				// [喵喵喵]: 压缩阈值随预留档位变化，必须每帧重算。
+				getSummaryLines: () => [
 					t("接入 {providerId} · API {api}", { providerId: draft.providerId, api: formatApiShort(draft.api) }),
 					t("Ctrl+S 保存并启用模型；不切换当前会话模型"),
+					formatCompactionThreshold(draft, inheritedCompactionReserve),
 				],
 				onAdjust: (id, direction) => {
 					if (!applyHorizontalToggle(draft, id, direction)) return undefined;
-					return toMenuRows(buildRows(draft));
+					return toMenuRows(buildRows(draft, inheritedCompactionReserve));
 				},
 				hints: [
 					{ key: "↑↓", label: t("选择") },
@@ -376,6 +476,6 @@ export async function editModel(
 		);
 		if (action.type === "cancel") return { action: "cancel" };
 		if (action.type === "save") return { action: "save", draft };
-		await editField(ctx, draft, action.id, requestHeaderProfiles, clientHeaderCaptures);
+		await editField(ctx, draft, action.id, requestHeaderProfiles, clientHeaderCaptures, inheritedCompactionReserve);
 	}
 }
