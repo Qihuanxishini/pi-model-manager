@@ -38,6 +38,7 @@ import type { StateDocument, StoredModel, StoredProvider } from "../types.ts";
 import { editModel } from "./editor-model.ts";
 import { editProvider } from "./editor-provider.ts";
 import { showOptionPicker, showPersistentShortcutMenu, type MenuCursor } from "./persistent-menu.ts";
+import { runScreenFlow } from "./screen-host.ts";
 import {
 	formatModelListHeader,
 	formatModelListRow,
@@ -380,6 +381,16 @@ type DashboardShortcut = "new-provider" | "header-profiles" | "delete-provider" 
 
 export async function runDashboard(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
 	const cursor: MenuCursor = { index: 0 };
+	// [喵喵喵]: 整条 dashboard 流程共用一个 ctx.ui.custom 对话框（见 screen-host.ts），
+	// 页面切换只在宿主动态换屏，不再先退回主输入框再重开，终端上不会闪。
+	await runScreenFlow(ctx, (hostCtx) => runDashboardLoop(pi, hostCtx, cursor));
+}
+
+async function runDashboardLoop(
+	pi: ExtensionAPI,
+	ctx: ExtensionCommandContext,
+	cursor: MenuCursor,
+): Promise<void> {
 	while (true) {
 		const state = await readState();
 		const builtInProviderIds = await getBuiltinProviderIds();
