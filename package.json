@@ -32,6 +32,7 @@
     "request-pipeline.ts",
     "model-mutations.ts",
     "header-profile-mutations.ts",
+    "compaction-settings.ts",
     "rescue.ts",
     "atomic-write.ts",
     "proper-lockfile.d.ts",

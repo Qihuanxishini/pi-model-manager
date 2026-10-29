@@ -18,6 +18,8 @@ export type BuiltInClientHeaderProfileId = "claude-code" | "codex-cli";
 export type ClientHeaderProfileId = "recommended" | "disabled" | BuiltInClientHeaderProfileId | "custom";
 export type CompatSettings = Record<string, unknown>;
 export type OpenAIServiceTier = "priority" | "ultrafast";
+/** 上下文压缩预留档位：global 跟随全局设置、auto 按上下文窗口算、数字为固定 token。 */
+export type CompactionReserveChoice = "global" | "auto" | number;
 
 export const DEFAULT_PROVIDER_HTTP_PROXY_URL = "http://127.0.0.1:7890";
 
@@ -146,6 +148,10 @@ export interface ModelDraft {
 	anthropicThinkingProtocol?: AnthropicThinkingProtocol;
 	contextWindow: number;
 	maxTokens: number;
+	/** 压缩预留档位：global 跟随全局设置、auto 取上下文窗口 12%、数字为固定 token。 */
+	compactionReserve?: CompactionReserveChoice;
+	/** 读取 settings.json 失败时为 false：保存时跳过压缩预留写入，避免误删已有覆盖。 */
+	compactionReserveWritable?: boolean;
 	openAIServiceTier?: OpenAIServiceTier;
 	selectedIndex: number;
 }
@@ -167,3 +173,4 @@ export type ModelListFetchOutcome =
 // ========== 常量 ==========
 
 export const ZERO_COST: TokenCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+
