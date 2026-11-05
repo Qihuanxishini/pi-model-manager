@@ -132,6 +132,7 @@ test("关闭或普通 400 不读取目标错误；只接受指定状态错误，
 		assert.equal(await h.pipeline.recover(failed(error), h.ctx), undefined);
 	}
 	const recoverableErrors = [
+		'agent-git API error (400): {"message":"OpenAI Responses bad request: The requested item was created under a different *** OpenAI resource. Use the same resource that created the item to access it. [trace_id=recovery-test]","type":"invalid_request_error","param":"","code":null}',
 		"Item with id 'rs_old' was not found", "Item with id 'msg_old' not found",
 		"Item 'msg_old' of type 'message' was provided without its required 'reasoning' item",
 		"400 encrypted content could not be verified", "invalid_encrypted_content",

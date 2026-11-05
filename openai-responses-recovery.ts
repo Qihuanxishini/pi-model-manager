@@ -108,7 +108,7 @@ function stripQuarantinedItemIds(
 }
 
 function isRecoverableError(message: string): boolean {
-	return /created under a different Azure OpenAI resource/i.test(message)
+	return /created under a different (?:Azure|\*{3}) OpenAI resource/i.test(message)
 		|| /\bItem with id ['"][^'"\r\n]+['"] (?:was )?not found\b/i.test(message)
 		|| /\bwas provided without its required ['"]reasoning['"] item\b/i.test(message)
 		|| /\binvalid_encrypted_content\b/i.test(message)
