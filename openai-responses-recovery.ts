@@ -122,17 +122,18 @@ function notify(ctx: ExtensionContext, key: MessageKey, snapshot: RequestSnapsho
 export function createOpenAIResponsesRecovery() {
 	let lastRequest: RequestSnapshot | undefined;
 	let pendingRecovery: RequestSnapshot | undefined;
-	let attempted = false;
 
 	return {
 		beginActivity(): void {
 			lastRequest = undefined;
 			pendingRecovery = undefined;
-			attempted = false;
+		},
+
+		beginRequest(): void {
+			lastRequest = undefined;
 		},
 
 		transform(payload: unknown, ctx: ExtensionContext, state: StateDocument): unknown | undefined {
-			lastRequest = undefined;
 			const model = enabledModel(ctx, state);
 			if (!model || !isObjectRecord(payload) || payload.model !== model.id || payload.store === true
 				|| !Array.isArray(payload.input)) return undefined;
@@ -148,7 +149,7 @@ export function createOpenAIResponsesRecovery() {
 		},
 
 		async recover(event: AgentBeforeSettleEvent, ctx: ExtensionContext): Promise<BoundaryResult | undefined> {
-			if (!lastRequest || attempted || event.outcome !== "error") return undefined;
+			if (!lastRequest || event.outcome !== "error") return undefined;
 			const snapshot = lastRequest;
 			const model = enabledModel(ctx, await readCachedState());
 			if (!model || scopeFor(model) !== snapshot.state.scope || ctx.sessionManager.getSessionId() !== snapshot.sessionId) return undefined;
@@ -161,9 +162,9 @@ export function createOpenAIResponsesRecovery() {
 			if (!snapshot.state.itemIds.length) return undefined;
 
 			// [喵喵喵]: 只记录失败请求携带的旧 item ID；无法定位具体失效项时成组剥离，不触碰推理密文、正文和 call_id。
-			// [喵喵喵]: 原始历史保留，仅追加分支状态与失败回复的上下文省略；同一次用户运行最多恢复一次。
+			// [喵喵喵]: 原始历史保留，仅追加分支状态与失败回复的上下文省略；恢复不设次数上限，旧 ID 已全部剥离时不再原样重放。
 			// [喵喵喵]: 错误 assistant 尚在上下文时 canContinue 为 false；省略它后由宿主重新校验，不能提前据此拒绝恢复。
-			attempted = true;
+			lastRequest = undefined;
 			pendingRecovery = snapshot;
 			notify(ctx, "{model}：将剥离本次失败历史的 item ID，保留思维链并自动重试一次。", snapshot);
 			return {

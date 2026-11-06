@@ -81,6 +81,8 @@ export function createRequestPipeline(): RequestPipeline {
 			}
 		},
 		async transform(initialPayload, ctx) {
+			// [喵喵喵]: 配置读取失败也不能沿用旧请求快照；这里只开始新请求，不清理待确认的恢复结果。
+			recovery.beginRequest();
 			let payload = initialPayload;
 			let changed = false;
 			if (!ctx.model || (ctx.model.api !== "anthropic-messages" && ctx.model.api !== "openai-responses")) return undefined;
