@@ -8,7 +8,7 @@
 
 一个面向 [Pi](https://github.com/earendil-works/pi) 的 TUI 模型与接入管理扩展。它以 Pi 原生 `models.json` 为模型配置的唯一权威来源，并提供接入/模型编辑、请求头身份、代理路由和协议兼容配置。
 
-> 本扩展要求 Pi `>=0.85.1`。
+> 本扩展要求 Pi `>=0.85.1`，Node.js `22.x >=22.21.0` 或 `>=24.5.0`。
 
 ## 界面预览
 
@@ -210,6 +210,8 @@ pi install npm:pi-model-manager
 Base URL 表示 API 根地址：OpenAI 两种协议和 Anthropic 只填域名时补 `/v1`，显式填写路径时保留该路径，再追加协议端点。例如 Anthropic 的 `https://gw.example.com/xxx` 请求 `/xxx/messages`，模型列表请求 `/xxx/models`。Google 在官方根地址上补 `/v1beta`，自定义路径保持原样。Base URL 不支持查询参数（`?`）、片段（`#`）或内嵌认证；SDK 正常生成的请求参数不受影响。
 
 Anthropic 标准端点在写入 `models.json` 时转换为 Pi 原生 SDK 所需形式，因此未加载扩展时也能使用；自定义版本路径通过 `state.json` 私有标记衔接，依赖扩展的发送适配。代理开关只改变传输路线，最终端点、业务请求头和 payload 保持一致；代理失败会报错。
+
+代理出站使用 Node 原生 Agent，同一接入、代理地址和上游协议下的请求可复用连接。修改代理地址后新请求使用新池；旧池无在途请求并空闲 30 秒后回收。临时路由清理不会中断 SSE；会话关闭会中止在途转发并释放连接池。切换代理软件内的节点是否中断旧连接由该软件控制，插件不监听节点选择。
 
 ### Chat 协议兼容
 

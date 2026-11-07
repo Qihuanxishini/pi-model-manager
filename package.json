@@ -3,6 +3,9 @@
   "version": "0.4.5",
   "description": "A TUI model and provider manager for Pi with native models.json persistence, request-header profiles, proxy routing, and protocol compatibility.",
   "type": "module",
+  "engines": {
+    "node": "^22.21.0 || >=24.5.0"
+  },
   "main": "./index.ts",
   "scripts": {
     "test": "node --experimental-strip-types --import ./tests/register-test-loader.mjs --test --test-reporter=spec tests/*.test.ts",
@@ -74,13 +77,11 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
   },
   "dependencies": {
-    "http-proxy-agent": "^9.1.0",
-    "https-proxy-agent": "^9.1.0",
     "minimatch": "^10.2.6",
     "proper-lockfile": "^4.1.2"
   }

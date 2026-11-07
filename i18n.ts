@@ -281,6 +281,7 @@ const ENGLISH_MESSAGES = {
 	"已删除请求头 {profileId}": "Deleted header profile {profileId}",
 	"代理地址无效：{url}": "Invalid proxy URL: {url}",
 	"代理地址目前只支持 http:// 或 https:// 代理": "Only http:// or https:// proxies are currently supported",
+	"接入代理要求 Node.js 22.21.0（22.x）或 24.5.0 及以上；当前版本为 {version}": "Provider proxies require Node.js 22.21.0 (22.x) or 24.5.0 and later; the current version is {version}",
 	"代理请求失败：{code}": "Proxy request failed: {code}",
 	"代理安全拦截：上游返回了重定向至 {target}，已拒绝跟随": "Proxy security block: upstream redirected to {target}; following it was refused",
 	"拒绝转发：目标 Origin {actual} 与注册路由 {expected} 不一致": "Forwarding refused: target origin {actual} does not match the registered route {expected}",

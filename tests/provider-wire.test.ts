@@ -5,6 +5,7 @@ import test, { after } from "node:test";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { injectClaudeCodeMetadata, resetClaudeCodeMetadataSession } from "../claude-code-compat.ts";
 import { closeLocalProxyServer } from "../local-proxy-service.ts";
+import { CODEX_CLI_CLIENT_HEADERS } from "../presets/builtin-client-headers.ts";
 import type { ApiKind, StoredProvider } from "../types.ts";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -99,7 +100,7 @@ test("真实 Pi：Codex 画像、跨 profile 切换、禁缓存及直连/代理�
 			const disabled = { ...custom, clientHeaderProfile: "disabled" as const };
 			const configs = Object.fromEntries(Object.entries({ claude, codex, custom, disabled }).map(([id, config]) => [id, { ...config, httpProxyEnabled, httpProxyUrl: localUrl }]));
 			const state = { version: 2 as const, providers: configs, managedProviderIds: Object.keys(configs), requestHeaderProfiles: {}, clientHeaderCaptures: {
-				"codex-cli": { capturedAt: "fixture", headers: { "User-Agent": "codex-tui/0.163.0 (Windows 10.0; x86_64) unknown", originator: "codex-tui", "x-codex-beta-features": "remote_compaction_v2" } },
+				"codex-cli": { capturedAt: "fixture", headers: { ...CODEX_CLI_CLIENT_HEADERS } },
 			} };
 			await mkdir(STATE_DIR, { recursive: true });
 			await writeFile(MODELS_JSON_PATH, JSON.stringify(buildSynchronizedModelsDocument(state, { providers: {} })));
@@ -145,9 +146,9 @@ test("真实 Pi：Codex 画像、跨 profile 切换、禁缓存及直连/代理�
 							assert.equal(headers["x-codex-routing-hint"], "explicit-route");
 							continue;
 						}
-						assert.match(String(headers["user-agent"]), /^codex-tui\/0\.163\.0(?:\s|$)/);
-						assert.equal(headers.version, "0.163.0", "旧抓包从自己的 UA 补版本，不混入内置版本");
-						assert.equal(headers.originator, "codex-tui");
+						assert.equal(headers["user-agent"], CODEX_CLI_CLIENT_HEADERS["user-agent"]);
+						assert.equal(headers.version, CODEX_CLI_CLIENT_HEADERS.version);
+						assert.equal(headers.originator, CODEX_CLI_CLIENT_HEADERS.originator);
 						assert.equal(Object.keys(headers).some((name) => name.startsWith("x-stainless-")), false);
 						if (body.input) {
 							assert.equal(headers["session-id"], manager.getSessionId());

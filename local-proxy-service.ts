@@ -7,14 +7,15 @@
 import { randomUUID } from "node:crypto";
 import http, { type IncomingHttpHeaders, type IncomingMessage, type ServerResponse } from "node:http";
 import https from "node:https";
-import { HttpProxyAgent } from "http-proxy-agent";
-import { HttpsProxyAgent } from "https-proxy-agent";
+import { isIP } from "node:net";
+import { TLSSocket } from "node:tls";
 import { t } from "./i18n.ts";
 import { redactSensitiveText, redactUrlForDisplay } from "./sensitive-redaction.ts";
 import type { StoredProvider } from "./types.ts";
 import { DEFAULT_PROVIDER_HTTP_PROXY_URL } from "./types.ts";
 
 export interface ProviderProxyRoute {
+	providerId: string;
 	upstreamOrigin: string;
 	proxyUrl: string;
 }
@@ -24,6 +25,20 @@ export interface TemporaryLocalProxyRoute {
 	close(): void;
 }
 
+interface ProxyAgentPool {
+	key: string;
+	agent: http.Agent;
+	activeRequests: number;
+	idleTimer?: ReturnType<typeof setTimeout>;
+}
+
+interface ProxyRequestOptions extends http.RequestOptions {
+	proxyAbortSignal: AbortSignal;
+}
+
+const AGENT_POOL_IDLE_MS = 30_000;
+const AGENT_POOLS = new Map<string, ProxyAgentPool>();
+const UPSTREAM_REQUESTS = new Map<http.ClientRequest, AbortController>();
 const ROUTES = new Map<string, ProviderProxyRoute>();
 let server: http.Server | undefined;
 let listenPromise: Promise<number> | undefined;
@@ -78,9 +93,88 @@ function stripHopByHopHeaders(headers: IncomingHttpHeaders): Record<string, stri
 	return next;
 }
 
-function getUrlPort(url: URL): number {
-	if (url.port) return Number.parseInt(url.port, 10);
-	return url.protocol === "https:" ? 443 : 80;
+function ensureNativeProxySupport(): void {
+	const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
+	if ((major === 22 && minor >= 21) || (major === 24 && minor >= 5) || major > 24) return;
+	// [喵喵喵]: 旧 Node 会忽略 proxyEnv；必须拒绝请求，不能让已开启的代理静默变成直连。
+	throw new Error(t("接入代理要求 Node.js 22.21.0（22.x）或 24.5.0 及以上；当前版本为 {version}", {
+		version: process.versions.node,
+	}));
+}
+
+function createProxyAgent(protocol: string, proxyUrl: string): http.Agent {
+	const proxyEnv = { HTTP_PROXY: proxyUrl, HTTPS_PROXY: proxyUrl, NO_PROXY: "" };
+	const Agent = protocol === "https:" ? https.Agent : http.Agent;
+	const agent = new Agent({ keepAlive: true, maxFreeSockets: 2, proxyEnv });
+	const proxy = new URL(proxyUrl);
+	const proxyHost = proxy.hostname.replace(/^\[|\]$/g, "");
+	const proxyServername = proxy.protocol === "https:" && !isIP(proxyHost) ? proxyHost : undefined;
+	const createConnection = agent.createConnection.bind(agent);
+	// [喵喵喵]: CONNECT 完成前 socket 尚未入原生池；单独销毁 ClientRequest 无法取消这一段建连。
+	agent.createConnection = (options, callback) => {
+		const { proxyAbortSignal: signal, ...connectionOptions } = options as ProxyRequestOptions;
+		let pending = true;
+		let socket: ReturnType<typeof createConnection>;
+		const abort = () => socket?.destroy(signal?.reason instanceof Error ? signal.reason : undefined);
+		const cleanup = () => {
+			pending = false;
+			signal?.removeEventListener("abort", abort);
+			socket?.off("close", cleanup);
+		};
+		socket = createConnection(connectionOptions, (error, connectedSocket) => {
+			cleanup();
+			callback?.(error, connectedSocket);
+		});
+		// [喵喵喵]: 原生代理 TLS 不自动发送 SNI；握手前设置代理域名，不能误用上游目标域名。
+		if (proxyServername && socket instanceof TLSSocket) socket.setServername(proxyServername);
+		if (pending && socket && signal) {
+			signal.addEventListener("abort", abort, { once: true });
+			socket.once("close", cleanup);
+			if (signal.aborted) abort();
+		}
+		return socket;
+	};
+	return agent;
+}
+
+function acquireAgentPool(route: ProviderProxyRoute, protocol: string): ProxyAgentPool {
+	const proxyUrl = parseHttpProxyUrl(route.proxyUrl).toString();
+	const key = JSON.stringify([route.providerId, proxyUrl, protocol]);
+	let pool = AGENT_POOLS.get(key);
+	if (!pool) {
+		pool = {
+			key,
+			agent: createProxyAgent(protocol, proxyUrl),
+			activeRequests: 0,
+		};
+		AGENT_POOLS.set(key, pool);
+	}
+	if (pool.idleTimer) {
+		clearTimeout(pool.idleTimer);
+		pool.idleTimer = undefined;
+	}
+	pool.activeRequests += 1;
+	return pool;
+}
+
+function releaseAgentPool(pool: ProxyAgentPool): void {
+	pool.activeRequests -= 1;
+	if (pool.activeRequests !== 0 || AGENT_POOLS.get(pool.key) !== pool) return;
+	// [喵喵喵]: 只回收没有在途请求的整个池；临时路由可能在 SSE 响应头到达时就已删除。
+	pool.idleTimer = setTimeout(() => {
+		if (AGENT_POOLS.get(pool.key) !== pool || pool.activeRequests !== 0) return;
+		AGENT_POOLS.delete(pool.key);
+		pool.agent.destroy();
+	}, AGENT_POOL_IDLE_MS);
+	pool.idleTimer.unref();
+}
+
+function destroyProxyAgentPools(): void {
+	for (const pool of AGENT_POOLS.values()) {
+		if (pool.idleTimer) clearTimeout(pool.idleTimer);
+		pool.agent.destroy();
+	}
+	AGENT_POOLS.clear();
 }
 
 function getHostHeader(url: URL): string {
@@ -151,11 +245,18 @@ function buildForwardRequestHeaders(target: URL, request: IncomingMessage): Reco
 	return headers;
 }
 
-function bindClientAbort(request: IncomingMessage, response: ServerResponse, upstreamRequest: http.ClientRequest): void {
+function bindClientAbort(
+	request: IncomingMessage,
+	response: ServerResponse,
+	upstreamRequest: http.ClientRequest,
+	abortController: AbortController,
+): void {
 	const destroyUpstream = () => {
+		abortController.abort();
 		if (!upstreamRequest.destroyed) upstreamRequest.destroy();
 	};
 	const destroyUpstreamWithError = (error: Error) => {
+		abortController.abort(error);
 		if (!upstreamRequest.destroyed) upstreamRequest.destroy(error);
 	};
 	const onResponseClose = () => {
@@ -177,44 +278,6 @@ function writeUpstreamRequestError(response: ServerResponse, error: Error): void
 	writeProxyError(response, error);
 }
 
-function forwardPlainHttp(target: URL, proxy: URL, request: IncomingMessage, response: ServerResponse, route: ProviderProxyRoute): void {
-	ensureSupportedProxyProtocol(proxy);
-	const headers = buildForwardRequestHeaders(target, request);
-	const agent = new HttpProxyAgent(proxy);
-	const upstreamRequest = http.request({
-		hostname: target.hostname,
-		port: getUrlPort(target),
-		method: request.method,
-		path: `${target.pathname}${target.search}`,
-		headers,
-		agent,
-	}, (upstreamResponse) => pipeResponse(upstreamResponse, response, route));
-	upstreamRequest.once("close", () => agent.destroy());
-	bindClientAbort(request, response, upstreamRequest);
-	upstreamRequest.on("error", (error) => writeUpstreamRequestError(response, error));
-	// [喵喵喵]: 请求体直接流向上游，避免图像等大 payload 在本地代理中形成完整内存副本 (2026-07-17)
-	// [喵喵喵]: 等代理完成请求头重建后再流式读取 body，避免 chunked 请求在异步建连期间重复写入 HTTP 头。
-	upstreamRequest.once("socket", () => request.pipe(upstreamRequest));
-}
-
-function forwardHttps(target: URL, proxy: URL, request: IncomingMessage, response: ServerResponse, route: ProviderProxyRoute): void {
-	ensureSupportedProxyProtocol(proxy);
-	const headers = buildForwardRequestHeaders(target, request);
-	const agent = new HttpsProxyAgent(proxy);
-	const upstreamRequest = https.request({
-		hostname: target.hostname,
-		port: getUrlPort(target),
-		method: request.method,
-		path: `${target.pathname}${target.search}`,
-		headers,
-		agent,
-	}, (upstreamResponse) => pipeResponse(upstreamResponse, response, route));
-	upstreamRequest.once("close", () => agent.destroy());
-	bindClientAbort(request, response, upstreamRequest);
-	upstreamRequest.on("error", (error) => writeUpstreamRequestError(response, error));
-	upstreamRequest.once("socket", () => request.pipe(upstreamRequest));
-}
-
 function forwardRequest(route: ProviderProxyRoute, request: IncomingMessage, response: ServerResponse, routePath: string): void {
 	const target = new URL(routePath, route.upstreamOrigin);
 	// [喵喵喵]: 强制校验解析后的 target.origin 严格等于受管的 upstreamOrigin，阻断 SSRF 任意上游转发
@@ -224,16 +287,36 @@ function forwardRequest(route: ProviderProxyRoute, request: IncomingMessage, res
 			expected: route.upstreamOrigin,
 		}));
 	}
-	const proxy = new URL(route.proxyUrl);
-	if (target.protocol === "http:") {
-		forwardPlainHttp(target, proxy, request, response, route);
-		return;
+	if (target.protocol !== "http:" && target.protocol !== "https:") {
+		throw new Error(t("不支持的上游协议：{protocol}", { protocol: target.protocol }));
 	}
-	if (target.protocol === "https:") {
-		forwardHttps(target, proxy, request, response, route);
-		return;
+	const headers = buildForwardRequestHeaders(target, request);
+	const abortController = new AbortController();
+	const pool = acquireAgentPool(route, target.protocol);
+	const transport = target.protocol === "https:" ? https : http;
+	const options: ProxyRequestOptions = {
+		method: request.method,
+		headers,
+		agent: pool.agent,
+		signal: abortController.signal,
+		proxyAbortSignal: abortController.signal,
+	};
+	let upstreamRequest: http.ClientRequest;
+	try {
+		upstreamRequest = transport.request(target, options, (upstreamResponse) => pipeResponse(upstreamResponse, response, route));
+	} catch (error) {
+		releaseAgentPool(pool);
+		throw error;
 	}
-	throw new Error(t("不支持的上游协议：{protocol}", { protocol: target.protocol }));
+	UPSTREAM_REQUESTS.set(upstreamRequest, abortController);
+	upstreamRequest.once("close", () => {
+		UPSTREAM_REQUESTS.delete(upstreamRequest);
+		releaseAgentPool(pool);
+	});
+	bindClientAbort(request, response, upstreamRequest, abortController);
+	upstreamRequest.on("error", (error) => writeUpstreamRequestError(response, error));
+	// [喵喵喵]: 请求体直接流向上游，避免图像等大 payload 在本地代理中形成完整内存副本 (2026-07-17)
+	upstreamRequest.once("socket", () => request.pipe(upstreamRequest));
 }
 
 function handleRequest(request: IncomingMessage, response: ServerResponse): void {
@@ -312,6 +395,7 @@ async function ensureServer(): Promise<number> {
 }
 
 async function ensureServerForRoute(): Promise<number> {
+	ensureNativeProxySupport();
 	const port = await ensureServer();
 	if (closingPromise) throw new Error(t("本地代理服务正在关闭，请稍后重试"));
 	return port;
@@ -322,6 +406,7 @@ export async function getLocalProxyBaseUrl(routeId: string, upstreamRuntimeBaseU
 	const proxy = parseHttpProxyUrl(proxyUrl);
 	const port = await ensureServerForRoute();
 	ROUTES.set(routeId, {
+		providerId: routeId,
 		upstreamOrigin: upstream.origin,
 		proxyUrl: proxy.toString(),
 	});
@@ -338,7 +423,7 @@ export async function openTemporaryLocalProxyRoute(
 	const proxy = parseHttpProxyUrl(proxyUrl);
 	const port = await ensureServerForRoute();
 	const routeId = `${providerId}/model-list/${randomUUID()}`;
-	const route = { upstreamOrigin: upstream.origin, proxyUrl: proxy.toString() };
+	const route = { providerId, upstreamOrigin: upstream.origin, proxyUrl: proxy.toString() };
 	ROUTES.set(routeId, route);
 	const basePath = trimTrailingSlashes(upstream.pathname || "");
 	return {
@@ -386,21 +471,28 @@ async function closeServerLifecycle(): Promise<void> {
 		}
 	}
 	const current = server;
-	if (!current) return;
+	const pendingClose = current?.listening
+		? new Promise<void>((resolve, reject) => {
+			current.close((error) => error ? reject(error) : resolve());
+		})
+		: undefined;
+	current?.closeAllConnections();
+	for (const [upstreamRequest, abortController] of UPSTREAM_REQUESTS) {
+		abortController.abort();
+		upstreamRequest.destroy();
+	}
+	UPSTREAM_REQUESTS.clear();
+	destroyProxyAgentPools();
 	try {
-		if (current.listening) {
-			await new Promise<void>((resolve, reject) => {
-				current.close((error) => error ? reject(error) : resolve());
-			});
-		}
+		await pendingClose;
 	} finally {
-		clearServerState(current);
+		if (current) clearServerState(current);
 	}
 }
 
 export async function closeLocalProxyServer(): Promise<void> {
 	if (closingPromise) return closingPromise;
-	const operation = closeServerLifecycle();
+	const operation = Promise.resolve().then(closeServerLifecycle);
 	closingPromise = operation;
 	try {
 		await operation;
