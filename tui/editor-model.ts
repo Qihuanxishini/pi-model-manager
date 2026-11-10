@@ -31,7 +31,7 @@ interface FieldRow {
 
 
 function shouldShowOpenAIServiceTier(draft: ModelDraft): boolean {
-	return draft.api === "openai-responses";
+	return draft.providerManaged && draft.api === "openai-responses";
 }
 
 function shouldShowAnthropicThinkingProtocol(draft: ModelDraft): boolean {
@@ -360,6 +360,9 @@ export async function editModel(
 				summaryLines: [
 					t("接入 {providerId} · API {api}", { providerId: draft.providerId, api: formatApiShort(draft.api) }),
 					t("Ctrl+S 保存并启用模型；不切换当前会话模型"),
+					...(!draft.providerManaged && draft.api === "openai-responses"
+						? [t("Fast mode 需要先接管该接入；请先保存接入配置。")]
+						: []),
 				],
 				onAdjust: (id, direction) => {
 					if (!applyHorizontalToggle(draft, id, direction)) return undefined;

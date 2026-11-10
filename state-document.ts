@@ -118,11 +118,12 @@ export function createProviderDraftFromStored(providerId: string, stored: Stored
 	};
 }
 
-function createModelDraftFromProvider(providerDraft: ProviderDraft): ModelDraft {
+function createModelDraftFromProvider(providerDraft: ProviderDraft, providerManaged: boolean): ModelDraft {
 	const preset = findPresetForApi(providerDraft.api);
 	return {
 		providerId: providerDraft.providerId,
 		providerName: providerDraft.providerName,
+		providerManaged,
 		api: providerDraft.api,
 		baseUrl: providerDraft.baseUrl,
 		apiKey: providerDraft.apiKey,
@@ -147,7 +148,7 @@ function createModelDraftFromProvider(providerDraft: ProviderDraft): ModelDraft 
 }
 
 export function createModelDraftForStoredProvider(providerId: string, stored: StoredProvider): ModelDraft {
-	return createModelDraftFromProvider(createProviderDraftFromStored(providerId, stored));
+	return createModelDraftFromProvider(createProviderDraftFromStored(providerId, stored), stored.managed);
 }
 
 export function createModelDraftFromStoredModel(
@@ -165,6 +166,7 @@ export function createModelDraftFromStoredModel(
 	return {
 		providerId,
 		providerName: stored.name ?? (providerId.replace(/^custom-/, "") || preset.defaultProviderName),
+		providerManaged: stored.managed,
 		api: effectiveApi,
 		baseUrl: stored.managed
 			? model.baseUrl ?? stored.baseUrl
@@ -260,6 +262,7 @@ export function validateModelDraft(
 
 	const provider = document.providers[draft.providerId];
 	if (!provider) errors.push(t("接入配置不存在：{providerId}", { providerId: draft.providerId }));
+	if (provider && !provider.managed && draft.openAIServiceTier) errors.push(t("Fast mode 需要先接管该接入；请先保存接入配置。"));
 
 	if (!draft.baseUrl.trim()) errors.push(t("Base URL 不能为空"));
 	else validateUrl(draft.baseUrl.trim(), "Base URL", errors);

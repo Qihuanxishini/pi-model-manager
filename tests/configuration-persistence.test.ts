@@ -315,6 +315,53 @@ test("Codex 派生字段保存回读后仍为生成值，显式同值覆盖保�
 	assert.equal(disabled[2].headers.version, explicitVersion);
 });
 
+test("画像变化后定点保存不会重算未改写模型的生成头来源", async () => {
+	const { getClientHeadersForProfile } = await import("../presets/client-headers.ts");
+	const { migrateManagedEndpointConfiguration } = await import("../configuration-persistence.ts");
+	const profiles = ["codex-cli", "claude-code"] as const;
+	const providers = Object.fromEntries(profiles.map((profile) => {
+		const api = profile === "codex-cli" ? "openai-responses" : "anthropic-messages";
+		return [profile, { api, baseUrl: "https://fixture.test/v1", piModelManager: { managed: true },
+			models: ["edited", "untouched"].map((id) => ({ id, headers: {
+				...getClientHeadersForProfile(profile, api, {}), "x-user-header": "keep",
+			} })),
+		}];
+	}));
+	const source = jsonSource({ providers });
+	await writeFile(MODELS_JSON_PATH, source);
+	await writeFile(STATE_PATH, jsonSource({ version: 5, managedProviderIds: [...profiles], providers: {}, models: {}, requestHeaderProfiles: {}, clientHeaderCaptures: {} }));
+	await migrateManagedEndpointConfiguration();
+	assert.equal(await readFile(MODELS_JSON_PATH, "utf8"), source, "初始化来源记录不得改写原生模型");
+	const initial = JSON.parse(await readFile(STATE_PATH, "utf8"));
+	for (const profile of profiles) {
+		assert.ok(initial.models[`${profile}/untouched`]?.generatedClientHeaders?.["user-agent"]);
+		initial.clientHeaderCaptures[profile] = { capturedAt: new Date().toISOString(), headers: {
+			"user-agent": profile === "codex-cli" ? "codex_cli_rs/0.999.0" : "claude-cli/9.9.9",
+		} };
+	}
+	await writeFile(STATE_PATH, jsonSource(initial));
+	const ctx = { modelRegistry: { async refresh() {} } } as any;
+	await persistModelConfiguration(ctx, (latest) => {
+		latest.providers["codex-cli"]!.models[0]!.name = "Edited";
+		return { document: latest, changedProviderIds: ["codex-cli"], removedProviderIds: [] };
+	}, "codex-cli", "edited");
+	const saved = JSON.parse(await readFile(STATE_PATH, "utf8"));
+	const raw = JSON.parse(await readFile(MODELS_JSON_PATH, "utf8"));
+	for (const profile of profiles) {
+		assert.deepEqual(raw.providers[profile].models[1], providers[profile]!.models[1]);
+		assert.deepEqual(saved.models[`${profile}/untouched`].generatedClientHeaders, initial.models[`${profile}/untouched`].generatedClientHeaders);
+		assert.deepEqual((await readState()).providers[profile]!.models[1]!.headers, { "x-user-header": "keep" });
+	}
+	assert.equal(saved.models["codex-cli/edited"].generatedClientHeaders["user-agent"], "codex_cli_rs/0.999.0");
+	await persistManagedConfiguration(ctx, (latest) => {
+		for (const provider of Object.values(latest.providers)) provider.clientHeaderProfile = "disabled";
+		return { document: latest, changedProviderIds: [...profiles], removedProviderIds: [] };
+	});
+	for (const provider of Object.values(JSON.parse(await readFile(MODELS_JSON_PATH, "utf8")).providers) as any[]) {
+		for (const model of provider.models) assert.deepEqual(model.headers, { "x-user-header": "keep" });
+	}
+});
+
 test("过期编辑器创建和重命名发生重名时，锁内拒绝且不覆盖双文件", async () => {
 	const { createEmptyState } = await import("../state-store.ts");
 	const { createProviderDraft, createModelDraftForStoredProvider } = await import("../state-document.ts");

@@ -10,7 +10,8 @@ import { cloneJson, isObjectRecord, stringifyJson, stripJsonNoise } from "./comm
 import { readStableTextFileSnapshot, type FileSignature } from "./file-snapshot.ts";
 import { t } from "./i18n.ts";
 import { mergeCompatSettings } from "./compat-settings.ts";
-import { getClientHeadersForProfile, mergeModelRequestHeaders, resolveClientHeaderProfile } from "./presets/client-headers.ts";
+import { getClientHeadersForProfile, mergeModelRequestHeaders, resolveClientHeaderProfile, resolveProviderCustomHeaders } from "./presets/client-headers.ts";
+import type { ModelsJsonDocument } from "./models-json-manager.ts";
 import { getGeneratedCodexClientHeaders } from "./presets/codex-client-headers.ts";
 import { fromNativeBaseUrl, toNativeBaseUrl } from "./runtime-base-url.ts";
 import type {
@@ -67,6 +68,12 @@ export interface MetadataDocument {
 	models: Record<string, ModelMetadata>;
 	requestHeaderProfiles: Record<string, StoredRequestHeaderProfile>;
 	clientHeaderCaptures: Partial<Record<BuiltInClientHeaderProfileId, StoredClientHeaderCapture>>;
+}
+
+interface HeaderSnapshotSource {
+	previous: MetadataDocument;
+	models: ModelsJsonDocument;
+	isModelRewritten(providerId: string, modelId: string): boolean;
 }
 
 export interface ParsedMetadataStateFile {
@@ -423,11 +430,15 @@ function extractModelMetadata(model: StoredModel, provider: StoredProvider, stat
 	const api = model.api ?? provider.api;
 	if (toNativeBaseUrl(api, model.baseUrl ?? provider.baseUrl).anthropicApiRoot) metadata.anthropicApiRoot = true;
 	if (model.openAIServiceTier) metadata.openAIServiceTier = model.openAIServiceTier;
-	if (state && resolveClientHeaderProfile(provider.clientHeaderProfile, api) === "codex-cli") {
-		const headers = getClientHeadersForProfile(provider.clientHeaderProfile, api, {}, state.clientHeaderCaptures,
-			mergeCompatSettings(provider.compat, model.compat));
-		// [喵喵喵]: 来源随双文件事务一起保存；显式值与模板相同也保留，UA 派生值不能在回读后变成显式覆盖。
-		metadata.generatedClientHeaders = getGeneratedCodexClientHeaders(headers ?? {}, mergeModelRequestHeaders(provider.headers, model.headers));
+	if (state) {
+		const headers = mergeModelRequestHeaders(undefined, getClientHeadersForProfile(provider.clientHeaderProfile, api,
+			resolveProviderCustomHeaders(provider, state.requestHeaderProfiles), state.clientHeaderCaptures,
+			mergeCompatSettings(provider.compat, model.compat))) ?? {};
+		const explicit = mergeModelRequestHeaders(provider.headers, model.headers) ?? {};
+		const profile = resolveClientHeaderProfile(provider.clientHeaderProfile, api);
+		metadata.generatedClientHeaders = profile === "codex-cli"
+			? getGeneratedCodexClientHeaders(headers, explicit)
+			: Object.fromEntries(Object.entries(headers).filter(([name]) => profile === "custom" || !Object.hasOwn(explicit, name.toLowerCase())));
 	}
 	return metadata;
 }
@@ -518,7 +529,7 @@ export async function readMetadataStateSnapshot(): Promise<MetadataStateSnapshot
 	return { ...parsed, source: snapshot.source, signature: snapshot.signature, contentHash: snapshot.contentHash };
 }
 
-function extractMetadata(state: StateDocument): MetadataDocument {
+function extractMetadata(state: StateDocument, source?: HeaderSnapshotSource): MetadataDocument {
 	const metadata = createEmptyMetadata();
 	metadata.managedProviderIds = Object.entries(state.providers)
 		.filter(([, provider]) => provider.managed)
@@ -529,16 +540,25 @@ function extractMetadata(state: StateDocument): MetadataDocument {
 		if (!provider.managed) continue;
 		const providerMetadata = extractProviderMetadata(provider);
 		if (Object.keys(providerMetadata).length > 0) metadata.providers[providerId] = providerMetadata;
+		const persistedModels = new Map(source?.models.providers[providerId]?.models?.map((model) => [model.id, model]));
 		for (const model of provider.models) {
+			const fullId = getFullModelId(providerId, model.id);
 			const modelMetadata = extractModelMetadata(model, provider, state);
-			if (Object.keys(modelMetadata).length > 0) metadata.models[getFullModelId(providerId, model.id)] = modelMetadata;
+			if (source && !source.isModelRewritten(providerId, model.id)) {
+				// [喵喵喵]: 定点保存不得用新画像重算未改写模型的来源；无记录时仅认领当前画像的同值字段。
+				const generated = source.previous.models[fullId]?.generatedClientHeaders ?? modelMetadata.generatedClientHeaders ?? {};
+				const persisted = mergeModelRequestHeaders(undefined, persistedModels.get(model.id)?.headers) ?? {};
+				modelMetadata.generatedClientHeaders = Object.fromEntries(Object.entries(generated)
+					.filter(([name, value]) => persisted[name.toLowerCase()] === value));
+			}
+			if (Object.keys(modelMetadata).length > 0) metadata.models[fullId] = modelMetadata;
 		}
 	}
 	return metadata;
 }
 
-export function serializeMetadataState(state: StateDocument): string {
-	return stringifyJson(extractMetadata(state));
+export function serializeMetadataState(state: StateDocument, source?: HeaderSnapshotSource): string {
+	return stringifyJson(extractMetadata(state, source));
 }
 export function getStatePath(): string {
 	return STATE_PATH;

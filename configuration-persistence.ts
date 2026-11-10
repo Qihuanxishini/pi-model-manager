@@ -167,9 +167,8 @@ async function writeConfigurationTransaction(
 	modelsSnapshot: Awaited<ReturnType<typeof readModelsJsonSnapshot>>,
 	metadataSnapshot: Awaited<ReturnType<typeof readMetadataStateSnapshot>>,
 	modelsTarget: string,
-	nextState: StateDocument,
+	metadataTarget: string,
 ): Promise<void> {
-	const metadataTarget = serializeMetadataState(nextState);
 	const journal: ConfigurationTransactionJournal = {
 		version: 1,
 		createdAt: new Date().toISOString(),
@@ -213,6 +212,8 @@ type ModelsDocumentMutation = (
 async function persistConfigurationInsideLock(
 	prepare: PrepareConfigurationChange,
 	mutateModels: ModelsDocumentMutation,
+	isModelRewritten: (providerId: string, modelId: string, change: PreparedConfigurationChange) => boolean
+		= (providerId, _modelId, change) => change.changedProviderIds.includes(providerId),
 ): Promise<StateDocument> {
 	await recoverPendingConfigurationTransactionInsideLock();
 	const [modelsSnapshot, metadataSnapshot] = await Promise.all([
@@ -244,21 +245,35 @@ async function persistConfigurationInsideLock(
 	const modelsTarget = nextModels === modelsSnapshot.document && modelsSnapshot.source !== undefined
 		? modelsSnapshot.source
 		: stringifyJson(nextModels);
-	await writeConfigurationTransaction(modelsSnapshot, metadataSnapshot, modelsTarget, change.document);
+	const metadataTarget = serializeMetadataState(change.document, {
+		previous: metadataSnapshot.metadata,
+		models: nextModels,
+		isModelRewritten: (providerId, modelId) => Object.hasOwn(metadataSnapshot.legacyProviders, providerId)
+			|| isModelRewritten(providerId, modelId, change),
+	});
+	await writeConfigurationTransaction(modelsSnapshot, metadataSnapshot, modelsTarget, metadataTarget);
 	return change.document;
 }
 
-/** 在 catalog 注册前完成地址语义升级，避免 models.json 原生覆盖与私有元数据版本不一致。 */
+/** 在 catalog 注册前升级地址语义，并为缺少来源记录的模型初始化生成头快照。 */
 export async function migrateManagedEndpointConfiguration(): Promise<boolean> {
 	return withConfigurationLock(async () => {
 		await recoverPendingConfigurationTransactionInsideLock();
-		if ((await readMetadataStateSnapshot()).metadata.version >= 5) return false;
+		const metadataSnapshot = await readMetadataStateSnapshot();
+		const migrateEndpoints = metadataSnapshot.metadata.version < 5;
+		if (!migrateEndpoints) {
+			const modelsSnapshot = await readModelsJsonSnapshot();
+			const state = await buildStateDocumentFromSources(modelsSnapshot.document, metadataSnapshot);
+			const missingHeaders = Object.entries(state.providers).some(([providerId, provider]) => provider.managed
+				&& provider.models.some((model) => metadataSnapshot.metadata.models[`${providerId}/${model.id}`]?.generatedClientHeaders === undefined));
+			if (!missingHeaders) return false;
+		}
 		await persistConfigurationInsideLock(
 			(document) => ({ document, changedProviderIds: [], removedProviderIds: [] }),
 			(source) => source,
 		);
 		invalidateStateCache();
-		return true;
+		return migrateEndpoints;
 	});
 }
 
@@ -327,6 +342,7 @@ export async function persistModelConfiguration(
 			providerId,
 			modelId,
 		),
+		(candidateProviderId, candidateModelId) => candidateProviderId === providerId && candidateModelId === modelId,
 	));
 }
 
@@ -346,6 +362,7 @@ export async function persistModelRenameConfiguration(
 			newModelId,
 			oldModelId,
 		),
+		(candidateProviderId, candidateModelId) => candidateProviderId === providerId && candidateModelId === newModelId,
 	));
 }
 
@@ -358,5 +375,6 @@ export async function persistModelDeletionConfiguration(
 	return refreshRegistryAfterPersistence(ctx, () => persistConfigurationInsideLock(
 		prepare,
 		(source, change) => buildModelsDocumentWithoutModel(change.document, source, providerId, modelId),
+		() => false,
 	));
 }

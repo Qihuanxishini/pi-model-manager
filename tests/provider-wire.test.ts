@@ -166,7 +166,8 @@ test("真实 Pi：Codex 画像、跨 profile 切换、禁缓存及直连/代理�
 						else assert.doesNotMatch(String(headers["user-agent"]), /^codex/);
 						assert.equal(headers["x-stainless-lang"], id === "custom" ? "custom-lang" : "js");
 						assert.equal(headers.originator, undefined);
-						assert.equal(headers["session-id"], undefined);
+						// [喵喵喵]: Pi 原生 Responses 也会发送 session-id；以 Codex 专属 thread-id 检查画像隔离。
+						assert.equal(headers["thread-id"], undefined);
 						assert.equal(headers["x-codex-routing-hint"], undefined);
 					}
 				}

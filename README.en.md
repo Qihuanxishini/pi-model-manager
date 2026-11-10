@@ -2,13 +2,13 @@
 
 English · [简体中文](./README.md)
 
-[![Pi](https://img.shields.io/badge/Pi-%3E%3D0.85.1-6f42c1)](https://github.com/earendil-works/pi)
+[![Pi](https://img.shields.io/badge/Pi-%3E%3D0.87.0-6f42c1)](https://github.com/earendil-works/pi)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](./LICENSE)
 [![npm](https://img.shields.io/npm/v/pi-model-manager?color=2f81f7)](https://www.npmjs.com/package/pi-model-manager)
 
 A TUI model and provider manager for [Pi](https://github.com/earendil-works/pi). It keeps Pi's native `models.json` as the single source of truth for model configuration while adding provider/model editing, client-header identities, proxy routing, and protocol compatibility controls.
 
-> This extension requires Pi `>=0.85.1` and Node.js `22.x >=22.21.0` or `>=24.5.0`.
+> This extension requires Pi `>=0.87.0` and Node.js `22.x >=22.21.0` or `>=24.5.0`. Configuration locking on Windows requires PowerShell 7 (`pwsh`). Provider proxies are not supported under Bun.
 
 ## Interface preview
 
@@ -233,7 +233,7 @@ Model capabilities include:
 
 ### Responses service tiers
 
-For `openai-responses`, the model editor shows **Fast mode**. Cycle through the three tiers with `←` / `→`, or press `Enter` for the full descriptions. The model list also shows the selected tier. The Chinese UI uses 标准 / Fast / Ultrafast.
+For managed providers using `openai-responses`, the model editor shows **Fast mode**. Unmanaged providers hide this option and show a prompt to save the provider configuration first. Cycle through the three tiers with `←` / `→`, or press `Enter` for the full descriptions. The model list also shows the selected tier. The Chinese UI uses 标准 / Fast / Ultrafast.
 
 | Tier | Request behavior |
 | --- | --- |
@@ -252,19 +252,18 @@ Fast and Ultrafast require support from the upstream service, account, and model
 | Recommended | Claude Code for Anthropic Messages, Codex for OpenAI Completions/Responses, and no identity headers for other protocols |
 | Disabled | Adds no extension-managed client identity headers |
 | Claude Code | Uses the built-in Claude Code compatibility headers and adds required Anthropic request metadata |
-| Codex | Uses the built-in Codex TUI compatibility headers |
+| Codex | Uses the built-in Codex Rust CLI compatibility headers |
 | Custom | Uses a reusable JSON header set created in the header-profile panel |
 
-The current built-in values were derived from real client requests with authentication fields removed:
-
-- Claude Code `2.1.312`
-- Codex TUI `0.165.0`
+Built-in profiles live in `presets/builtin-client-headers.ts` and contain no authentication material. Machine-local captures take precedence when present. Codex uses the `codex_cli_rs` identity, with fields based on [codex-proxy-rs](https://github.com/zyycn/codex-proxy-rs).
 
 These headers only help API gateways that require a recognized client identity; they do not replace an API key. The public repository and npm package contain **no request-capture tooling, user captures, authentication headers, or machine-local state**. Disable identity headers or create a custom profile if a built-in profile does not fit your endpoint.
 
 Custom profiles reject authentication-related sensitive headers. Put authentication material in the provider's API-key setting instead.
 
 Explicit native headers override built-in templates; selecting a custom profile gives its values final priority. Header names are merged case-insensitively. Custom `anthropic-beta` lists are preserved in full, including when Adaptive Thinking is enabled.
+
+Generated-header snapshots follow the models actually rewritten; saving another model does not update an untouched model's snapshot. When no source record exists, only fields matching the current profile are recorded. Older values of uncertain origin remain native overrides and are not automatically removed by historical value or header name. **Disabled** therefore does not remove those overrides; inspect them before editing `models.json` manually.
 
 ## Configuration files
 
@@ -276,6 +275,8 @@ Explicit native headers override built-in templates; selecting a custom profile 
 The extension generates client headers, proxy routes, and dynamic registrations only for explicitly managed providers. Ownership requires both a managed ID in `state.json` and a `piModelManager.managed` marker on the Provider node in `models.json`; this prevents a deleted Provider ID from silently taking ownership of an unrelated native Provider that later reuses the same ID. Native providers without this ownership evidence remain unmanaged: saving unrelated settings does not rewrite their existing headers or unknown native fields. Built-in Pi providers cannot be edited or deleted through this extension.
 
 Plugin configuration writes are serialized with a cross-process lock, and `enabledModels` also honors Pi's `proper-lockfile` lock. An intent journal makes the `models.json` / `state.json` pair recoverable after interruption, and readers reject an in-progress half-written pair. External editors do not honor these locks, so content hashes are still checked before saving; an external change cancels the save instead of being overwritten.
+
+The configuration lock records both PID and system process start time to detect PID reuse; elapsed lock age never evicts an active owner. A failed identity query does not reclaim a potentially active lock, and writes cannot acquire a lock without verifying their own process identity. Queries use `pwsh` on Windows, `/proc` on Linux, and `/bin/ps` on macOS. The current process identity is cached within that process.
 
 Older endpoint configurations migrate to v5 metadata while preserving their final chat addresses. A pre-migration snapshot of both files is stored as `base-url-v5-*.json` in the extension configuration directory. These snapshots contain raw configuration and must be protected like credential files. A rollback requires restoring the matching code, `models.json`, and `state.json` together.
 
@@ -302,10 +303,12 @@ Additional considerations:
 
 | Component | Requirement |
 | --- | --- |
-| `@earendil-works/pi-coding-agent` | `>=0.85.1` |
+| `@earendil-works/pi-coding-agent` | `>=0.87.0` |
 | `@earendil-works/pi-ai` | `>=0.85.1` |
 | `@earendil-works/pi-tui` | `>=0.75.0` |
 | Runtime mode | `/model-manager` requires the Pi TUI |
+
+Pi `0.87.0` is the API floor for `agent_before_settle`, not a claim of compatibility verified across every release. Current real-host checks target Pi `1.5.2`; earlier releases have not been individually verified.
 
 The TUI copy defaults to Simplified Chinese; press `L` on the dashboard to switch to English.
 
@@ -320,7 +323,7 @@ pi -e .
 
 Pi loads the TypeScript entry point directly; no separate build step is required. Do not commit `state.json`, `bootstrap-meta.json`, `node_modules`, or request-capture data.
 
-Tests have separate stub and real-host entry points. The current real-host verification baseline is Pi `1.4.0`:
+Tests have separate stub and real-host entry points. The current real-host verification baseline is Pi `1.5.2`:
 
 ```bash
 npm test
@@ -329,7 +332,7 @@ PI_TEST_RUNTIME_ROOT="/path/to/node_modules/@earendil-works/pi-coding-agent" npm
 
 `npm test` uses test stubs and skips real-host cases. `test:runtime` runs only `tests/*-wire.test.ts`, covering the complete built-in provider guard and protocol transport. Set `PI_TEST_RUNTIME_ROOT` to the installed Pi package directory; use a `C:/...` path in Windows Git Bash. These tests use local responses and fake credentials without calling external model services.
 
-Host-provided packages use `"*"` in `peerDependencies`; supported versions are listed in the compatibility table above. Runtime modules are supplied by Pi.
+Host-provided packages declare minimum requirements in `peerDependencies`, matching the compatibility table above. Runtime modules are supplied by Pi.
 
 Inspect the public package contents with:
 

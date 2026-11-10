@@ -35,12 +35,14 @@ async function seedLock(pid: number, token = "stale", startedAt = new Date().toI
 
 test("同一配置目录中的并发操作按独占锁串行执行", async () => {
 	const events: string[] = [];
+	const firstEntered = Promise.withResolvers<void>();
 	const first = withConfigurationLock(async () => {
 		events.push("first:start");
+		firstEntered.resolve();
 		await delay(150);
 		events.push("first:end");
 	});
-	await delay(15);
+	await firstEntered.promise;
 	const second = withConfigurationLock(async () => { events.push("second:start", "second:end"); });
 	await Promise.all([first, second]);
 	assert.deepEqual(events, ["first:start", "first:end", "second:start", "second:end"]);
@@ -51,6 +53,20 @@ test("已退出的同主机进程锁可被回收", async () => {
 	let entered = false;
 	await withConfigurationLock(async () => { entered = true; });
 	assert.equal(entered, true);
+	await assert.rejects(access(lockPath));
+});
+
+test("PID 已被新进程复用时按进程创建时间回收旧锁", async () => {
+	const marker = await seedLock(process.pid, "reused-pid");
+	const record = JSON.parse(await readFile(marker, "utf8"));
+	record.processStartedAt = "previous-process";
+	await writeFile(marker, JSON.stringify(record));
+	await withConfigurationLock(async () => {
+		const [name] = await readdir(lockPath);
+		const current = JSON.parse(await readFile(join(lockPath, name!), "utf8"));
+		assert.equal(typeof current.processStartedAt, "string");
+		assert.notEqual(current.processStartedAt, record.processStartedAt);
+	});
 	await assert.rejects(access(lockPath));
 });
 

@@ -94,6 +94,11 @@ function stripHopByHopHeaders(headers: IncomingHttpHeaders): Record<string, stri
 }
 
 function ensureNativeProxySupport(): void {
+	if (process.versions.bun) {
+		throw new Error(t("接入代理不支持 Bun {version}；请使用 Node.js 22.21.0（22.x）或 24.5.0 及以上运行 Pi。", {
+			version: process.versions.bun,
+		}));
+	}
 	const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
 	if ((major === 22 && minor >= 21) || (major === 24 && minor >= 5) || major > 24) return;
 	// [喵喵喵]: 旧 Node 会忽略 proxyEnv；必须拒绝请求，不能让已开启的代理静默变成直连。

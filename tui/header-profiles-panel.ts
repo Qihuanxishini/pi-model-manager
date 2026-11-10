@@ -262,13 +262,13 @@ async function saveProfile(
 	draft: RequestHeaderProfileDraft,
 	oldProfileId: string | undefined,
 ): Promise<boolean> {
-	const state = await readState();
-	const errors = validateRequestHeaderProfileDraft(draft, state, oldProfileId);
-	if (errors.length > 0) {
-		notifyValidationErrors(ctx, errors);
-		return false;
-	}
 	try {
+		const state = await readState();
+		const errors = validateRequestHeaderProfileDraft(draft, state, oldProfileId);
+		if (errors.length > 0) {
+			notifyValidationErrors(ctx, errors);
+			return false;
+		}
 		await saveRequestHeaderProfileConfiguration(pi, ctx, state, draft, oldProfileId);
 	} catch (error) {
 		ctx.ui.notify(t("保存失败：{error}", { error: formatUnknownError(error) }), "error");
