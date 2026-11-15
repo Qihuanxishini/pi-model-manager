@@ -158,7 +158,12 @@ export function createProviderTransport(native: Provider, provider: StoredProvid
 				}
 			}
 			if (usesCodexHeaders) {
-				await applyCodexRequestHeaders(request, model.api as ApiKind, options?.sessionId, endpoint.explicitHeaderNames);
+				// [喵喵喵]: options.headers 已经过宿主头钩子，null 删除也属于显式结果；只清理 SDK 在其后新增的默认指纹。
+				const explicitHeaderNames = new Set([
+					...endpoint.explicitHeaderNames,
+					...Object.keys(options.headers ?? {}).map((name) => name.toLowerCase()),
+				]);
+				await applyCodexRequestHeaders(request, model.api as ApiKind, options.sessionId, explicitHeaderNames);
 			}
 			let response: Response;
 			if (!proxyUrl) {

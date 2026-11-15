@@ -182,6 +182,13 @@ async function pickModelFromUpstream(
 ): Promise<void> {
 	const params = {
 		providerId: draft.providerId,
+		providerManaged: draft.providerManaged,
+		providerHeaders: draft.providerHeaders,
+		modelHeaders: draft.modelHeaders,
+		compat: {
+			...draft.compat,
+			...(draft.api === "anthropic-messages" ? { forceAdaptiveThinking: draft.anthropicThinkingProtocol === "adaptive" } : {}),
+		},
 		api: draft.api,
 		baseUrl: draft.baseUrl,
 		apiKey: draft.apiKey,

@@ -10,6 +10,7 @@
 //     （由调用方从 catalog 边界传入，避免本纯函数模块依赖 Pi 运行时 API）
 
 import { cloneJson, cloneStringRecord, hasStringRecordEntries, trimOrFallback } from "./common.ts";
+import { mergeCompatSettings } from "./compat-settings.ts";
 import {
 	getConfigValueEnvVarNames,
 	getSingleConfigValueEnvVarName,
@@ -148,7 +149,11 @@ function createModelDraftFromProvider(providerDraft: ProviderDraft, providerMana
 }
 
 export function createModelDraftForStoredProvider(providerId: string, stored: StoredProvider): ModelDraft {
-	return createModelDraftFromProvider(createProviderDraftFromStored(providerId, stored), stored.managed);
+	return {
+		...createModelDraftFromProvider(createProviderDraftFromStored(providerId, stored), stored.managed),
+		providerHeaders: cloneStringRecord(stored.headers),
+		compat: cloneJson(stored.compat),
+	};
 }
 
 export function createModelDraftFromStoredModel(
@@ -167,6 +172,9 @@ export function createModelDraftFromStoredModel(
 		providerId,
 		providerName: stored.name ?? (providerId.replace(/^custom-/, "") || preset.defaultProviderName),
 		providerManaged: stored.managed,
+		providerHeaders: cloneStringRecord(stored.headers),
+		modelHeaders: cloneStringRecord(model.headers),
+		compat: mergeCompatSettings(stored.compat, model.compat),
 		api: effectiveApi,
 		baseUrl: stored.managed
 			? model.baseUrl ?? stored.baseUrl

@@ -49,6 +49,7 @@ export function extractValidatedModelIds(envelope: unknown, api: ApiKind): strin
 export async function readBoundedResponseText(response: Response, signal: AbortSignal): Promise<string> {
 	const declaredLength = Number.parseInt(response.headers.get("content-length") ?? "", 10);
 	if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
+		if (response.body) await waitWithSignal(response.body.cancel("response too large"), signal).catch(() => {});
 		throw new Error(t("模型列表响应体超过 {maxBytes} 字节上限", { maxBytes: MAX_RESPONSE_BYTES }));
 	}
 	if (!response.body) {

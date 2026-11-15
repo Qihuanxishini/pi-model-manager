@@ -1,7 +1,7 @@
 // 将配置交给 Pi 构造原生 Provider，插件仅包装其请求传输。
 
 import { ModelRuntime, type ExtensionAPI, type ProviderConfig } from "@earendil-works/pi-coding-agent";
-import type { Provider } from "@earendil-works/pi-ai";
+import { lazyStream, type Provider } from "@earendil-works/pi-ai";
 import { isBuiltinProviderId } from "./builtin-model-catalog.ts";
 import { buildCodexClientHeaders } from "./presets/codex-client-headers.ts";
 import { mergeCompatSettings } from "./compat-settings.ts";
@@ -10,6 +10,7 @@ import { t } from "./i18n.ts";
 import { removeProviderLocalProxyRoutes } from "./local-proxy-service.ts";
 import { getClientHeadersForProfile, mergeModelRequestHeaders, resolveClientHeaderProfile, resolveProviderCustomHeaders } from "./presets/client-headers.ts";
 import { createProviderTransport } from "./provider-transport.ts";
+import { readCachedState } from "./state-cache.ts";
 import { resolveRuntimeBaseUrl } from "./runtime-base-url.ts";
 import type { ApiKind, BuiltInClientHeaderProfileId, StateDocument, StoredClientHeaderCapture, StoredModel, StoredProvider, StoredRequestHeaderProfile } from "./types.ts";
 
@@ -48,6 +49,48 @@ async function buildNativeProvider(providerId: string, provider: StoredProvider,
 	return createProviderTransport(native, provider);
 }
 
+function createRefreshableProvider(providerId: string, native: Provider): Provider {
+	let current: Provider | undefined = native;
+	let refreshedState: StateDocument | undefined;
+	// [喵喵喵]: Pi 合成层会捕获 apiKey 对象，认证方法也必须通过稳定入口委派，不能只用 auth getter 切换对象。
+	const auth: Provider["auth"] = { apiKey: {
+		name: native.auth.apiKey?.name ?? native.name,
+		login: native.auth.apiKey?.login,
+		check: async (input) => current?.auth.apiKey?.check?.(input),
+		resolve: async (input) => current?.auth.apiKey?.resolve(input),
+	} };
+	const forward = (simple: boolean): Provider["streamSimple"] => (model, context, options) => {
+		if (!current) {
+			return lazyStream(model, async () => {
+				throw new Error(t("接入已移除或不再由插件管理：{providerId}", { providerId }));
+			}, undefined, options?.signal);
+		}
+		return simple ? current.streamSimple(model, context, options) : current.stream(model, context, options);
+	};
+	return {
+		id: providerId,
+		get name() { return current?.name ?? native.name; },
+		get baseUrl() { return current?.baseUrl; },
+		get headers() { return current?.headers; },
+		auth,
+		getModels: () => current?.getModels() ?? [],
+		refreshModelsAuth: "configured",
+		async refreshModels(context) {
+			if (context.allowNetwork || context.signal.aborted) return;
+			const state = await readCachedState();
+			if (state === refreshedState) return;
+			const provider = state.providers[providerId];
+			const next = provider?.managed && provider.models.length > 0
+				? await buildNativeProvider(providerId, provider, buildProviderConfig(provider, state.requestHeaderProfiles, state.clientHeaderCaptures))
+				: undefined;
+			// [喵喵喵]: 原生刷新保留 provider 实例；目录、认证和传输必须经同一次 generation 校验后切换，不另写模型缓存。
+			await context.publish({ update: () => { current = next; refreshedState = state; } });
+		},
+		stream: forward(false) as Provider["stream"],
+		streamSimple: forward(true),
+	};
+}
+
 function asManagedApi(value: string | undefined, fallback: ApiKind): ApiKind {
 	if (value === "openai-completions" || value === "openai-responses"
 		|| value === "anthropic-messages" || value === "google-generative-ai") return value;
@@ -60,8 +103,8 @@ function resolveModelRuntimeBaseUrl(provider: StoredProvider, model: StoredModel
 }
 
 export function buildModelRequestHeaders(
-	provider: StoredProvider,
-	model: StoredModel,
+	provider: Pick<StoredProvider, "api" | "managed" | "headers" | "compat" | "clientHeaderProfile" | "requestHeaderProfileId" | "customClientHeaders">,
+	model: Pick<StoredModel, "api" | "headers" | "compat">,
 	requestHeaderProfiles: Record<string, StoredRequestHeaderProfile>,
 	clientHeaderCaptures: Partial<Record<BuiltInClientHeaderProfileId, StoredClientHeaderCapture>>,
 ): Record<string, string> | undefined {
@@ -168,7 +211,7 @@ export async function reconcileProvider(
 
 	const config = buildProviderConfig(provider, requestHeaderProfiles, clientHeaderCaptures);
 	const native = await buildNativeProvider(providerId, provider, config);
-	replaceManagedProviderConfig(pi, providerId, native);
+	replaceManagedProviderConfig(pi, providerId, createRefreshableProvider(providerId, native));
 }
 
 async function reconcileAllFromState(

@@ -5,10 +5,11 @@ import { ModelRuntime, type ProviderConfig } from "@earendil-works/pi-coding-age
 import { formatUnknownError } from "../common.ts";
 import { t } from "../i18n.ts";
 import { openTemporaryLocalProxyRoute, type TemporaryLocalProxyRoute } from "../local-proxy-service.ts";
-import { getClientHeadersForProfile, mergeModelRequestHeaders } from "../presets/client-headers.ts";
+import { mergeModelRequestHeaders } from "../presets/client-headers.ts";
+import { buildModelRequestHeaders } from "../provider-registrar.ts";
 import { appendUrlPath, resolveRuntimeBaseUrl, validateRequestBaseUrl } from "../runtime-base-url.ts";
 import { isSensitiveHeaderName, redactSensitiveText } from "../sensitive-redaction.ts";
-import type { ApiKind, BuiltInClientHeaderProfileId, ClientHeaderProfileId, ModelListFetchOutcome, StoredClientHeaderCapture } from "../types.ts";
+import type { ApiKind, BuiltInClientHeaderProfileId, ClientHeaderProfileId, CompatSettings, ModelListFetchOutcome, StoredClientHeaderCapture } from "../types.ts";
 import { extractValidatedModelIds, readBoundedResponseText } from "./model-list-validation.ts";
 
 const MODEL_LIST_TIMEOUT_MS = 10_000;
@@ -61,7 +62,7 @@ function collectSensitiveHeaderValues(headers: Record<string, string> | undefine
 
 async function resolveFetchAuth(
 	params: FetchModelIdsParams,
-	profileHeaders: Record<string, string> | undefined,
+	modelHeaders: Record<string, string> | undefined,
 	signal: AbortSignal,
 ): Promise<ResolvedFetchAuth> {
 	const providerConfig: ProviderConfig = {
@@ -70,11 +71,12 @@ async function resolveFetchAuth(
 		apiKey: params.apiKey.trim(),
 		api: params.api,
 		authHeader: params.authHeader,
-		headers: profileHeaders,
+		headers: params.providerHeaders,
 		models: [{
 			id: TEMP_MODEL_ID,
 			name: TEMP_MODEL_ID,
 			api: params.api,
+			headers: modelHeaders,
 			reasoning: false,
 			input: ["text"],
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -162,6 +164,10 @@ async function requestModelIds(
 
 export interface FetchModelIdsParams {
 	providerId: string;
+	providerManaged?: boolean;
+	providerHeaders?: Record<string, string>;
+	modelHeaders?: Record<string, string>;
+	compat?: CompatSettings;
 	api: ApiKind;
 	baseUrl: string;
 	apiKey: string;
@@ -180,13 +186,20 @@ async function fetchModelIdsWithSignal(
 ): Promise<ModelListFetchOutcome> {
 	throwIfAborted(signal);
 	validateRequestBaseUrl(params.baseUrl);
-	const profileHeaders = getClientHeadersForProfile(
-		params.clientHeaderProfile,
-		params.api,
-		params.customClientHeaders,
+	const modelHeaders = buildModelRequestHeaders(
+		{
+			api: params.api,
+			managed: params.providerManaged ?? true,
+			headers: params.providerHeaders,
+			compat: params.compat,
+			clientHeaderProfile: params.clientHeaderProfile,
+			customClientHeaders: params.customClientHeaders,
+		},
+		{ headers: params.modelHeaders },
+		{},
 		params.clientHeaderCaptures ?? {},
 	);
-	const auth = await resolveFetchAuth(params, profileHeaders, signal);
+	const auth = await resolveFetchAuth(params, modelHeaders, signal);
 	redactionSecrets.push(...auth.redactionSecrets);
 	const defaults: Record<string, string> = { accept: "application/json" };
 	if (params.api === "anthropic-messages") {
@@ -223,7 +236,12 @@ export async function fetchModelIds(
 		timedOut = true;
 		controller.abort(new Error(t("模型列表请求总计超时（10 秒）")));
 	}, MODEL_LIST_TIMEOUT_MS);
-	const redactionSecrets = [params.apiKey.trim()].filter(Boolean);
+	const redactionSecrets = [
+		params.apiKey.trim(),
+		...collectSensitiveHeaderValues(params.providerHeaders),
+		...collectSensitiveHeaderValues(params.modelHeaders),
+		...collectSensitiveHeaderValues(params.customClientHeaders),
+	].filter(Boolean);
 	try {
 		return await fetchModelIdsWithSignal(params, controller.signal, redactionSecrets);
 	} catch (error) {

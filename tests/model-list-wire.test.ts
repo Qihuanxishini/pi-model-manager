@@ -13,6 +13,7 @@ test("真实 Pi：四协议发现保留端点和显式头，失败不猜地址�
 	let api: ApiKind = "anthropic-messages";
 	let status = 200;
 	let holdResponse = false;
+	let oversized = false;
 	let onRequest = () => {};
 	const server = createServer((req, res) => {
 		const headers = { ...req.headers };
@@ -20,6 +21,12 @@ test("真实 Pi：四协议发现保留端点和显式头，失败不猜地址�
 		for (const name of ["x-test-target-url", "host", "connection", "proxy-connection", "content-length", "transfer-encoding"]) delete headers[name];
 		captured.push({ url, headers });
 		onRequest();
+		if (oversized) {
+			res.writeHead(200, { "content-type": "application/json", "content-length": String(2 * 1024 * 1024 + 1) });
+			res.once("close", () => server.emit("oversized-response-closed"));
+			res.flushHeaders();
+			return;
+		}
 		if (holdResponse) return;
 		res.writeHead(status, { "content-type": "application/json" });
 		res.end(JSON.stringify(status === 200
@@ -41,7 +48,9 @@ test("真实 Pi：四协议发现保留端点和显式头，失败不猜地址�
 	};
 	const params: FetchModelIdsParams = {
 		providerId: "discovery-fixture", api, baseUrl: "http://gateway.invalid/tenant/xxx", apiKey: "fake-gateway-key", authHeader: true,
-		clientHeaderProfile: "custom", customClientHeaders: { "Anthropic-Version": "2023-06-01", "ANTHROPIC-BETA": "custom-beta", "User-Agent": "list-fixture" },
+		providerHeaders: { "X-Provider-Route": "provider-route", "X-Header-Priority": "provider-value" },
+		modelHeaders: { "X-Model-Route": "model-route", "x-header-priority": "model-value" },
+		clientHeaderProfile: "custom", customClientHeaders: { "Anthropic-Version": "2023-06-01", "ANTHROPIC-BETA": "custom-beta", "User-Agent": "list-fixture", "X-Header-Priority": "profile-value" },
 		httpProxyEnabled: false, httpProxyUrl: localUrl,
 	};
 	try {
@@ -57,6 +66,9 @@ test("真实 Pi：四协议发现保留端点和显式头，失败不猜地址�
 			assert.equal(request.url, "http://gateway.invalid/tenant/xxx/models");
 			assert.equal(request.headers["user-agent"], "list-fixture");
 			assert.equal(request.headers["anthropic-beta"], "custom-beta");
+			assert.equal(request.headers["x-provider-route"], "provider-route");
+			assert.equal(request.headers["x-model-route"], "model-route");
+			assert.equal(request.headers["x-header-priority"], "profile-value");
 			assert.equal(request.headers.authorization, "Bearer fake-gateway-key");
 			if (api === "anthropic-messages") assert.equal(request.headers["x-api-key"], "fake-gateway-key");
 			if (api === "google-generative-ai") assert.equal(request.headers["x-goog-api-key"], "fake-gateway-key");
@@ -78,6 +90,13 @@ test("真实 Pi：四协议发现保留端点和显式头，失败不猜地址�
 			assert.equal((await fetchModelIds({ ...params, baseUrl: params.baseUrl + suffix })).status, "failed");
 		}
 		assert.equal(captured.length, beforeInvalid);
+		oversized = true;
+		const upstreamClosed = once(server, "oversized-response-closed", { signal: AbortSignal.timeout(5000) });
+		const rejected = await fetchModelIds({ ...params, httpProxyEnabled: true });
+		assert.equal(rejected.status, "failed");
+		if (rejected.status === "failed") assert.match(rejected.message, /响应体超过/);
+		await upstreamClosed;
+		oversized = false;
 		holdResponse = true;
 		const received = Promise.withResolvers<void>();
 		onRequest = received.resolve;

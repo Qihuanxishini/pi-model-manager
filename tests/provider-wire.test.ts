@@ -6,9 +6,9 @@ import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { injectClaudeCodeMetadata, resetClaudeCodeMetadataSession } from "../claude-code-compat.ts";
 import { closeLocalProxyServer } from "../local-proxy-service.ts";
 import { CODEX_CLI_CLIENT_HEADERS } from "../presets/builtin-client-headers.ts";
-import type { ApiKind, StoredProvider } from "../types.ts";
+import type { ApiKind, StateDocument, StoredProvider } from "../types.ts";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 
 const agentDir = await mkdtemp(resolve(".test-provider-wire-"));
 process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -59,12 +59,20 @@ function provider(api: ApiKind, baseUrl: string): StoredProvider {
 	};
 }
 
+async function writeStateFixture(state: StateDocument): Promise<string> {
+	const { STATE_DIR, STATE_PATH, serializeMetadataState } = await import("../state-metadata-store.ts");
+	const { MODELS_JSON_PATH } = await import("../models-json-manager.ts");
+	const { invalidateStateCache } = await import("../state-cache.ts");
+	await mkdir(STATE_DIR, { recursive: true });
+	await writeFile(MODELS_JSON_PATH, JSON.stringify(buildSynchronizedModelsDocument(state, { providers: {} })));
+	await writeFile(STATE_PATH, serializeMetadataState(state));
+	invalidateStateCache();
+	return MODELS_JSON_PATH;
+}
+
 test("真实 Pi：Codex 画像、跨 profile 切换、禁缓存及直连/代理保持请求级隔离", { skip: !realRuntime, timeout: 30_000 }, async () => {
 	const { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } = await import("@earendil-works/pi-coding-agent");
 	const { default: extension } = await import("../index.ts");
-	const { STATE_DIR, STATE_PATH } = await import("../state-metadata-store.ts");
-	const { MODELS_JSON_PATH } = await import("../models-json-manager.ts");
-	const { invalidateStateCache } = await import("../state-cache.ts");
 	const captured: { headers: Record<string, unknown>; body: any }[] = [];
 	const server = createServer(async (req, res) => {
 		let body = "";
@@ -96,22 +104,28 @@ test("真实 Pi：Codex 画像、跨 profile 切换、禁缓存及直连/代理�
 				"X-Stainless-Lang": "explicit-lang", "Thread-Id": "explicit-thread", "X-Codex-Routing-Hint": "explicit-route",
 			} });
 			codex.compat = { sessionAffinityFormat: "openrouter" };
+			codex.models[0]!.openAIServiceTier = "priority";
 			const custom = { ...provider("openai-responses", "http://switch.invalid/v1"), clientHeaderProfile: "custom" as const, customClientHeaders: { "User-Agent": "custom-client", "X-Stainless-Lang": "custom-lang" } };
 			const disabled = { ...custom, clientHeaderProfile: "disabled" as const };
 			const configs = Object.fromEntries(Object.entries({ claude, codex, custom, disabled }).map(([id, config]) => [id, { ...config, httpProxyEnabled, httpProxyUrl: localUrl }]));
 			const state = { version: 2 as const, providers: configs, managedProviderIds: Object.keys(configs), requestHeaderProfiles: {}, clientHeaderCaptures: {
 				"codex-cli": { capturedAt: "fixture", headers: { ...CODEX_CLI_CLIENT_HEADERS } },
 			} };
-			await mkdir(STATE_DIR, { recursive: true });
-			await writeFile(MODELS_JSON_PATH, JSON.stringify(buildSynchronizedModelsDocument(state, { providers: {} })));
-			await writeFile(STATE_PATH, JSON.stringify({ version: 5, managedProviderIds: state.managedProviderIds,
-				providers: Object.fromEntries(Object.entries(configs).map(([id, config]) => [id, { clientHeaderProfile: config.clientHeaderProfile, customClientHeaders: config.customClientHeaders, httpProxyEnabled, httpProxyUrl: localUrl }])),
-				models: { "codex/gpt-5.2": { openAIServiceTier: "priority" } }, requestHeaderProfiles: {}, clientHeaderCaptures: state.clientHeaderCaptures,
-			}));
-			invalidateStateCache();
-			const runtime = await ModelRuntime.create({ credentials: emptyCredentials, modelsPath: MODELS_JSON_PATH, allowModelNetwork: false, refreshOnCreate: false });
+			const modelsPath = await writeStateFixture(state);
+			const runtime = await ModelRuntime.create({ credentials: emptyCredentials, modelsPath, allowModelNetwork: false, refreshOnCreate: false });
 			const settingsManager = SettingsManager.inMemory({ retry: { enabled: false }, compaction: { enabled: false } });
-			const resourceLoader = new DefaultResourceLoader({ cwd: agentDir, agentDir, settingsManager, extensionFactories: [extension], noSkills: true, noThemes: true, noPromptTemplates: true, noContextFiles: true });
+			let hookMode: "none" | "override" | "delete" = "none";
+			const headerHook = (pi: any) => {
+				pi.on("before_provider_headers", (event: any, ctx: any) => {
+					if (ctx.model?.provider !== "codex") return;
+					if (hookMode === "override") Object.assign(event.headers, {
+						"user-agent": "codex_cli_rs/9.9.9 (hook) unknown", originator: "hook-origin", version: "hook-version",
+						"x-stainless-lang": "hook-lang", "thread-id": "hook-thread", "x-codex-routing-hint": "hook-route",
+					});
+					if (hookMode === "delete") for (const name of ["originator", "version", "x-stainless-lang", "session-id", "thread-id", "x-client-request-id", "x-codex-routing-hint"]) event.headers[name] = null;
+				});
+			};
+			const resourceLoader = new DefaultResourceLoader({ cwd: agentDir, agentDir, settingsManager, extensionFactories: [extension, headerHook], noSkills: true, noThemes: true, noPromptTemplates: true, noContextFiles: true });
 			await resourceLoader.reload();
 			assert.deepEqual(resourceLoader.getExtensions().errors, []);
 			const manager = SessionManager.inMemory(agentDir);
@@ -171,6 +185,26 @@ test("真实 Pi：Codex 画像、跨 profile 切换、禁缓存及直连/代理�
 						assert.equal(headers["x-codex-routing-hint"], undefined);
 					}
 				}
+				await session.setModel(runtime.getModel("codex", "gpt-5.2")!);
+				for (const mode of ["override", "delete"] as const) {
+					hookMode = mode;
+					const before = captured.length;
+					await session.prompt("Apply the request header hook");
+					assert.equal(session.getLastAssistantText(), "ok");
+					assert.equal(captured.length, before + 1);
+					const { headers } = captured.at(-1)!;
+					if (mode === "override") {
+						assert.equal(headers["user-agent"], "codex_cli_rs/9.9.9 (hook) unknown");
+						assert.equal(headers.originator, "hook-origin");
+						assert.equal(headers.version, "hook-version");
+						assert.equal(headers["x-stainless-lang"], "hook-lang");
+						assert.equal(headers["thread-id"], "hook-thread");
+						assert.equal(headers["x-codex-routing-hint"], "hook-route");
+					} else {
+						for (const name of ["originator", "version", "x-stainless-lang", "session-id", "thread-id", "x-client-request-id", "x-codex-routing-hint"]) assert.equal(headers[name], undefined, `${name} 被钩子删除后不得重新加入`);
+					}
+				}
+				hookMode = "none";
 				const uncached = await runtime.streamSimple(runtime.getModel("codex", "gpt-5.2")!, context as any, { sessionId: manager.getSessionId(), cacheRetention: "none", onPayload: (payload: any) => ({ ...payload, model: "routed-model", service_tier: "ultrafast" }) }).result();
 				assert.equal(uncached.stopReason, "stop", uncached.errorMessage);
 				assert.equal(captured.at(-1)!.headers["session-id"], manager.getSessionId());
@@ -194,7 +228,8 @@ test("真实 Pi：Codex 画像、跨 profile 切换、禁缓存及直连/代理�
 test("真实 Pi：ClaudeCode 会话头与实际 JSON metadata 一致，不受发送前会话重置影响", { skip: !realRuntime, timeout: 15_000 }, async () => {
 	const config = { ...provider("anthropic-messages", "http://gateway.invalid/v1"), clientHeaderProfile: "claude-code" as const };
 	const state = { version: 2 as const, providers: { "session-wire": config }, managedProviderIds: ["session-wire"], requestHeaderProfiles: {}, clientHeaderCaptures: {} };
-	const runtime = await ModelRuntime.create({ credentials: emptyCredentials, modelsPath: null, refreshOnCreate: false, allowModelNetwork: false });
+	const modelsPath = await writeStateFixture(state);
+	const runtime = await ModelRuntime.create({ credentials: emptyCredentials, modelsPath, refreshOnCreate: false, allowModelNetwork: false });
 	const pi = { registerProvider: (native: any) => runtime.registerNativeProvider(native), unregisterProvider: (id: string) => runtime.unregisterProvider(id) } as any;
 	const originalFetch = globalThis.fetch;
 	let captured: Request | undefined;
@@ -263,8 +298,7 @@ test("真实 Pi：四协议代理前后端点、业务头、payload 和 SSE 结�
 		return originalFetch(local);
 	};
 	// [喵喵喵]: 生产入口总是先持久化再注册；宿主必须持有同一份原生模型配置，才能在头钩子之前解析模型级表达式。
-	const modelsPath = join(agentDir, "four-protocol-models.json");
-	await writeFile(modelsPath, JSON.stringify({ providers: {} }));
+	const modelsPath = await writeStateFixture({ version: 2, providers: {}, managedProviderIds: [], requestHeaderProfiles: {}, clientHeaderCaptures: {} });
 	const runtime = await ModelRuntime.create({ credentials: emptyCredentials, modelsPath, refreshOnCreate: false, allowModelNetwork: false });
 	const pi = { registerProvider: (native: any) => runtime.registerNativeProvider(native), unregisterProvider: (id: string) => runtime.unregisterProvider(id) } as any;
 	try {
@@ -274,12 +308,13 @@ test("真实 Pi：四协议代理前后端点、业务头、payload 和 SSE 结�
 			const config = provider(api, `http://${hostname}/xxx`);
 			config.headers = { "X-Remove-Provider": "remove", "X-Provider-Override": "configured" };
 			config.models[0]!.headers = { "X-Remove-Model": "remove", "X-Model-Route": "$PI_WIRE_MODEL_ROUTE" };
-			await writeFile(modelsPath, JSON.stringify(buildSynchronizedModelsDocument({ version: 2, providers: { [id]: config }, managedProviderIds: [id], requestHeaderProfiles: {}, clientHeaderCaptures: {} }, { providers: {} })));
-			await runtime.refresh({ allowNetwork: false });
 			const untouched = structuredClone(config);
 			const results: unknown[] = [];
 			for (const enabled of [false, true]) {
-				await reconcileProvider(pi, id, { ...config, httpProxyEnabled: enabled, httpProxyUrl: localUrl });
+				const stored = { ...config, httpProxyEnabled: enabled, httpProxyUrl: localUrl };
+				await writeStateFixture({ version: 2, providers: { [id]: stored }, managedProviderIds: [id], requestHeaderProfiles: {}, clientHeaderCaptures: {} });
+				await runtime.refresh({ allowNetwork: false });
+				await reconcileProvider(pi, id, stored);
 				const model = runtime.getModel(id, config.models[0]!.id)!;
 				assert.equal(model.baseUrl, config.baseUrl);
 				let transforms = 0;
@@ -337,13 +372,10 @@ test("真实 Pi：四协议代理前后端点、业务头、payload 和 SSE 结�
 });
 
 test("真实 Pi：标准 Anthropic 原生可用，加载插件后独立端点和混合协议仍按 API 根地址发送", { skip: !realRuntime, timeout: 15_000 }, async () => {
-	const directory = await mkdtemp(resolve(".test-native-wire-"));
-	const modelsPath = join(directory, "models.json");
 	const config = provider("anthropic-messages", "http://gateway.invalid/tenant/v1");
 	config.models.push({ ...config.models[0]!, id: "custom-root", baseUrl: "http://gateway.invalid/xxx" });
 	config.models.push({ ...provider("openai-completions", "unused").models[0]!, api: "openai-completions", baseUrl: "http://api.deepseek.com/independent" });
-	const source = buildSynchronizedModelsDocument({ version: 2, providers: { "native-wire": config }, managedProviderIds: ["native-wire"], requestHeaderProfiles: {}, clientHeaderCaptures: {} }, { providers: {} });
-	await writeFile(modelsPath, JSON.stringify(source));
+	const modelsPath = await writeStateFixture({ version: 2, providers: { "native-wire": config }, managedProviderIds: ["native-wire"], requestHeaderProfiles: {}, clientHeaderCaptures: {} });
 	const urls: string[] = [];
 	const originalFetch = globalThis.fetch;
 	globalThis.fetch = async (input, init) => {
@@ -368,6 +400,8 @@ test("真实 Pi：标准 Anthropic 原生可用，加载插件后独立端点和
 		for (const api of ["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"] as ApiKind[]) {
 			for (const suffix of ["?tenant=a", "#fragment"]) {
 				const invalid = provider(api, `http://gateway.invalid/v1${suffix}`);
+				await writeStateFixture({ version: 2, providers: { "invalid-wire": invalid }, managedProviderIds: ["invalid-wire"], requestHeaderProfiles: {}, clientHeaderCaptures: {} });
+				await runtime.refresh({ allowNetwork: false });
 				await reconcileProvider(pi, "invalid-wire", invalid);
 				const result = await runtime.streamSimple(runtime.getModel("invalid-wire", invalid.models[0]!.id)!, context as any).result();
 				assert.equal(result.stopReason, "error");
@@ -378,7 +412,6 @@ test("真实 Pi：标准 Anthropic 原生可用，加载插件后独立端点和
 		unregisterManagedProvider(pi, "invalid-wire");
 	} finally {
 		globalThis.fetch = originalFetch;
-		await rm(directory, { recursive: true, force: true });
 	}
 });
 
@@ -409,11 +442,14 @@ test("真实 Pi：四协议代理流可在结束前收到文本并取消，代�
 		directRequests += 1;
 		throw new Error("Unexpected direct request");
 	};
-	const runtime = await ModelRuntime.create({ credentials: emptyCredentials, modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
+	const modelsPath = await writeStateFixture({ version: 2, providers: {}, managedProviderIds: [], requestHeaderProfiles: {}, clientHeaderCaptures: {} });
+	const runtime = await ModelRuntime.create({ credentials: emptyCredentials, modelsPath, allowModelNetwork: false, refreshOnCreate: false });
 	const pi = { registerProvider: (native: any) => runtime.registerNativeProvider(native), unregisterProvider: (id: string) => runtime.unregisterProvider(id) } as any;
 	try {
 		for (api of ["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"] as ApiKind[]) {
 			const config = { ...provider(api, "http://gateway.invalid/xxx"), httpProxyEnabled: true, httpProxyUrl: proxyUrl };
+			await writeStateFixture({ version: 2, providers: { "cancel-wire": config }, managedProviderIds: ["cancel-wire"], requestHeaderProfiles: {}, clientHeaderCaptures: {} });
+			await runtime.refresh({ allowNetwork: false });
 			await reconcileProvider(pi, "cancel-wire", config);
 			upstreamClosed = Promise.withResolvers<void>();
 			const controller = new AbortController();
@@ -433,6 +469,8 @@ test("真实 Pi：四协议代理流可在结束前收到文本并取消，代�
 		}
 		failProxy = true;
 		const config = { ...provider("openai-completions", "http://gateway.invalid/xxx"), httpProxyEnabled: true, httpProxyUrl: proxyUrl };
+		await writeStateFixture({ version: 2, providers: { "failure-wire": config }, managedProviderIds: ["failure-wire"], requestHeaderProfiles: {}, clientHeaderCaptures: {} });
+		await runtime.refresh({ allowNetwork: false });
 		await reconcileProvider(pi, "failure-wire", config);
 		const result = await runtime.streamSimple(runtime.getModel("failure-wire", config.models[0]!.id)!, context as any, { signal: AbortSignal.timeout(5000) }).result();
 		assert.equal(result.stopReason, "error", result.errorMessage);
@@ -440,6 +478,95 @@ test("真实 Pi：四协议代理流可在结束前收到文本并取消，代�
 		assert.equal(directRequests, 0);
 		unregisterManagedProvider(pi, "failure-wire");
 	} finally {
+		globalThis.fetch = originalFetch;
+		await closeLocalProxyServer();
+		server.closeAllConnections();
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+	}
+});
+
+test("真实 Pi：原生模型刷新同时更新端点、认证和混合协议传输，不绕过接入代理", { skip: !realRuntime, timeout: 20_000 }, async () => {
+	const { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } = await import("@earendil-works/pi-coding-agent");
+	const { default: extension } = await import("../index.ts");
+	const captured: { url: string; headers: Record<string, unknown> }[] = [];
+	const server = createServer(async (req, res) => {
+		for await (const _ of req) {}
+		captured.push({ url: req.url!, headers: { ...req.headers } });
+		const api = req.url!.includes("/messages") ? "anthropic-messages"
+			: req.url!.includes("/chat/completions") ? "openai-completions"
+				: req.url!.includes("streamGenerateContent") ? "google-generative-ai" : "openai-responses";
+		res.writeHead(200, { "content-type": "text/event-stream" });
+		res.end(sse(api));
+	});
+	server.listen(0, "127.0.0.1");
+	await once(server, "listening");
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = async (input, init) => {
+		const request = new Request(input, init);
+		assert.equal(new URL(request.url).hostname, "127.0.0.1", "已开启接入代理的模型不得直连");
+		return originalFetch(request);
+	};
+	const id = "refresh-wire";
+	const config: StoredProvider = {
+		...provider("openai-responses", "http://refresh.invalid/before/v1"),
+		clientHeaderProfile: "disabled", customClientHeaders: {}, authHeader: true,
+		headers: { "X-Remove-After-Refresh": "old" },
+		httpProxyEnabled: true, httpProxyUrl: `http://127.0.0.1:${(server.address() as any).port}`,
+	};
+	const state: StateDocument = { version: 2, providers: { [id]: config }, managedProviderIds: [id], requestHeaderProfiles: {}, clientHeaderCaptures: {} };
+	let session: any;
+	try {
+		const modelsPath = await writeStateFixture(state);
+		const runtime = await ModelRuntime.create({ credentials: emptyCredentials, modelsPath, allowModelNetwork: false, refreshOnCreate: false });
+		const settingsManager = SettingsManager.inMemory({ retry: { enabled: false }, compaction: { enabled: false } });
+		const resourceLoader = new DefaultResourceLoader({ cwd: agentDir, agentDir, settingsManager, extensionFactories: [extension], noSkills: true, noThemes: true, noPromptTemplates: true, noContextFiles: true });
+		await resourceLoader.reload();
+		assert.deepEqual(resourceLoader.getExtensions().errors, []);
+		({ session } = await createAgentSession({ cwd: agentDir, agentDir, modelRuntime: runtime, model: runtime.getModel(id, config.models[0]!.id)!, resourceLoader, settingsManager, sessionManager: SessionManager.inMemory(agentDir), tools: [] }));
+		const errors: string[] = [];
+		await session.bindExtensions({ mode: "tui", uiContext: { notify() {}, setStatus() {}, setWidget() {} } as any, onError: (error: any) => errors.push(error.error) });
+		await session.prompt("Reply only OK");
+		assert.equal(session.getLastAssistantText(), "ok");
+		assert.equal(captured.at(-1)!.url, "http://refresh.invalid/before/v1/responses");
+
+		const next: StoredProvider = {
+			...config, baseUrl: "http://refresh.invalid/after/v1", apiKey: "refreshed-fixture-key", headers: { "X-Refreshed": "new" },
+			models: [config.models[0]!, ...(["openai-completions", "anthropic-messages", "google-generative-ai"] as ApiKind[]).map((api) => ({
+				...provider(api, "unused").models[0]!, api, baseUrl: `http://refresh.invalid/${api}/v1`,
+			}))],
+		};
+		await writeFile(modelsPath, JSON.stringify(buildSynchronizedModelsDocument({ ...state, providers: { [id]: next } }, { providers: {} })));
+		await runtime.refresh({ signal: AbortSignal.timeout(10_000) });
+		await session.prompt("Continue");
+		assert.equal(session.getLastAssistantText(), "ok");
+		assert.equal(captured.at(-1)!.url, "http://refresh.invalid/after/v1/responses");
+		assert.equal(captured.at(-1)!.headers.authorization, "Bearer refreshed-fixture-key");
+		// [喵喵喵]: /model 选中刷新后的对象才会替换 Pi 会话模型的旧 headers；传输层不能在头钩子后替宿主重合并。
+		await session.setModel(runtime.getModel(id, config.models[0]!.id)!);
+		await session.prompt("Continue");
+		assert.equal(session.getLastAssistantText(), "ok");
+		assert.equal(captured.at(-1)!.headers["x-remove-after-refresh"], undefined);
+		assert.equal(captured.at(-1)!.headers["x-refreshed"], "new");
+		for (const model of next.models.slice(1)) {
+			const selected = runtime.getModel(id, model.id);
+			assert.ok(selected, model.id);
+			assert.equal(selected.api, model.api);
+			await session.setModel(selected);
+			const before = captured.length;
+			await session.prompt("Continue");
+			assert.equal(session.getLastAssistantText(), "ok", model.api);
+			assert.equal(captured.length, before + 1, `${model.api} 必须通过代理发送一次`);
+			const request = captured.at(-1)!;
+			assert.ok(request.url.startsWith(`http://refresh.invalid/${model.api}/v1/`), request.url);
+			assert.equal(request.headers.authorization, "Bearer refreshed-fixture-key");
+			assert.equal(request.headers["x-remove-after-refresh"], undefined);
+		}
+		assert.deepEqual(errors, []);
+	} finally {
+		if (session) {
+			await session.extensionRunner.emit({ type: "session_shutdown" });
+			session.dispose();
+		}
 		globalThis.fetch = originalFetch;
 		await closeLocalProxyServer();
 		server.closeAllConnections();

@@ -76,10 +76,6 @@ function parseHttpProxyUrl(proxyUrl: string | undefined): URL {
 	return parsed;
 }
 
-export function isProviderHttpProxyEnabled(provider: StoredProvider): boolean {
-	return provider.httpProxyEnabled === true;
-}
-
 export function getProviderHttpProxyUrl(provider: StoredProvider): string {
 	return normalizeHttpProxyUrl(provider.httpProxyUrl);
 }
@@ -406,19 +402,6 @@ async function ensureServerForRoute(): Promise<number> {
 	return port;
 }
 
-export async function getLocalProxyBaseUrl(routeId: string, upstreamRuntimeBaseUrl: string, proxyUrl: string): Promise<string> {
-	const upstream = new URL(upstreamRuntimeBaseUrl);
-	const proxy = parseHttpProxyUrl(proxyUrl);
-	const port = await ensureServerForRoute();
-	ROUTES.set(routeId, {
-		providerId: routeId,
-		upstreamOrigin: upstream.origin,
-		proxyUrl: proxy.toString(),
-	});
-	const basePath = trimTrailingSlashes(upstream.pathname || "");
-	return `http://127.0.0.1:${port}/${encodeURIComponent(routeId)}${basePath}${upstream.search}`;
-}
-
 export async function openTemporaryLocalProxyRoute(
 	providerId: string,
 	upstreamUrl: string,
@@ -439,29 +422,9 @@ export async function openTemporaryLocalProxyRoute(
 	};
 }
 
-function isProviderRouteId(routeId: string, providerId: string): boolean {
-	return routeId === providerId || routeId.startsWith(`${providerId}/`);
-}
-
-export function snapshotProviderLocalProxyRoutes(providerId: string): Map<string, ProviderProxyRoute> {
-	return new Map(
-		[...ROUTES.entries()]
-			.filter(([routeId]) => isProviderRouteId(routeId, providerId))
-			.map(([routeId, route]): [string, ProviderProxyRoute] => [routeId, { ...route }]),
-	);
-}
-
-export function restoreProviderLocalProxyRoutes(
-	providerId: string,
-	snapshot: ReadonlyMap<string, ProviderProxyRoute>,
-): void {
-	removeProviderLocalProxyRoutes(providerId);
-	for (const [routeId, route] of snapshot) ROUTES.set(routeId, { ...route });
-}
-
 export function removeProviderLocalProxyRoutes(providerId: string): void {
 	for (const routeId of ROUTES.keys()) {
-		if (isProviderRouteId(routeId, providerId)) ROUTES.delete(routeId);
+		if (routeId.startsWith(`${providerId}/`)) ROUTES.delete(routeId);
 	}
 }
 

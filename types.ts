@@ -131,6 +131,10 @@ export interface ModelDraft {
 	providerId: string;
 	providerName: string;
 	providerManaged: boolean;
+	/** 模型发现沿用的原生头与兼容参数，不作为表单可编辑字段。 */
+	providerHeaders?: Record<string, string>;
+	modelHeaders?: Record<string, string>;
+	compat?: CompatSettings;
 	api: ApiKind;
 	baseUrl: string;
 	apiKey: string;
