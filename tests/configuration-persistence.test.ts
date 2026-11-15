@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import fs, { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after, beforeEach } from "node:test";
@@ -13,6 +14,7 @@ const {
 	persistManagedConfiguration,
 	persistModelConfiguration,
 	recoverPendingConfigurationTransaction,
+	migrateManagedEndpointConfiguration,
 } = await import("../configuration-persistence.ts");
 const { STATE_DIR, STATE_PATH } = await import("../state-metadata-store.ts");
 const { MODELS_JSON_PATH } = await import("../models-json-manager.ts");
@@ -51,6 +53,63 @@ async function pathExists(path: string): Promise<boolean> {
 		return false;
 	}
 }
+
+test("配置已就绪且无事务时，启动恢复和迁移不获取写锁", async (t) => {
+	const modelsSource = jsonSource({ providers: { managed: {
+		api: "openai-responses", baseUrl: "https://fixture.test/v1", piModelManager: { managed: true }, models: [{ id: "ready" }],
+	} } });
+	const metadataSource = jsonSource({ version: 5, managedProviderIds: ["managed"], providers: {},
+		models: { "managed/ready": { generatedClientHeaders: {} } }, requestHeaderProfiles: {}, clientHeaderCaptures: {} });
+	await writeFile(MODELS_JSON_PATH, modelsSource);
+	await writeFile(STATE_PATH, metadataSource);
+	const originalMkdir = fs.mkdir;
+	const mkdirMock = t.mock.method(fs, "mkdir", (...args: Parameters<typeof fs.mkdir>) => {
+		assert.notEqual(args[0], join(STATE_DIR, "config.lock"), "只读启动不应尝试获取配置写锁");
+		return originalMkdir(...args);
+	});
+	syncBuiltinESMExports();
+	t.after(() => { mkdirMock.mock.restore(); syncBuiltinESMExports(); });
+
+	assert.equal(await recoverPendingConfigurationTransaction(), false);
+	assert.equal(await migrateManagedEndpointConfiguration(), false);
+	assert.equal(await readFile(MODELS_JSON_PATH, "utf8"), modelsSource);
+	assert.equal(await readFile(STATE_PATH, "utf8"), metadataSource);
+	assert.equal(await pathExists(transactionPath), false);
+});
+
+test("只读迁移检查期间出现事务时，回到锁内恢复并按最新配置判定", async (t) => {
+	const models = (id: string) => jsonSource({ providers: { managed: {
+		api: "openai-responses", baseUrl: "https://fixture.test/v1", piModelManager: { managed: true }, models: [{ id }],
+	} } });
+	const metadata = (id: string) => jsonSource({ version: 5, managedProviderIds: ["managed"], providers: {},
+		models: { [`managed/${id}`]: { generatedClientHeaders: {} } }, requestHeaderProfiles: {}, clientHeaderCaptures: {} });
+	const oldModels = models("old");
+	const targetModels = models("new");
+	const oldState = metadata("old");
+	const targetState = metadata("new");
+	await writeFile(MODELS_JSON_PATH, oldModels);
+	await writeFile(STATE_PATH, oldState);
+	const originalReadFile = fs.readFile;
+	let modelReads = 0;
+	let interrupted = false;
+	const readFileMock = t.mock.method(fs, "readFile", async (...args: Parameters<typeof fs.readFile>) => {
+		if (args[0] === MODELS_JSON_PATH && ++modelReads === 2) {
+			await writeFile(transactionPath, jsonSource({ version: 1, createdAt: new Date().toISOString(),
+				modelsJson: transition(oldModels, targetModels), metadataState: transition(oldState, targetState) }));
+			await writeFile(MODELS_JSON_PATH, targetModels);
+			interrupted = true;
+		}
+		return originalReadFile(...args);
+	});
+	syncBuiltinESMExports();
+	t.after(() => { readFileMock.mock.restore(); syncBuiltinESMExports(); });
+
+	assert.equal(await migrateManagedEndpointConfiguration(), false);
+	assert.equal(interrupted, true, "必须覆盖快路径读取后的并发变化窗口");
+	assert.equal(await readFile(MODELS_JSON_PATH, "utf8"), targetModels);
+	assert.equal(await readFile(STATE_PATH, "utf8"), targetState);
+	assert.equal(await pathExists(transactionPath), false);
+});
 
 test("未完成双文件事务会补齐旧版本一端并删除意图文件", async () => {
 	const oldModels = jsonSource({ providers: { managed: { models: [{ id: "old" }] } } });

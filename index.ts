@@ -1,7 +1,7 @@
 // pi-model-manager 主入口
 //
-// factory 阶段（pi 会等待）读取配置并注册模型 catalog，但不启动长生命周期本地代理。
-// session_start 再激活完整 provider transport，session_shutdown 幂等关闭代理服务。
+// factory 阶段（pi 会等待）读取配置并注册完整 provider，本地代理按请求启动。
+// session_start 核对配置与注册状态，session_shutdown 幂等关闭代理服务。
 //
 // models.json 是模型定义唯一来源；state.json 只保存请求头 profile、抓包缓存、service_tier 等插件私有元数据。
 // 启动期通知用 session_start 事件 + ctx.ui.notify（factory 期没有 ctx）。
@@ -19,7 +19,6 @@ import { closeLocalProxyServer } from "./local-proxy-service.ts";
 import { registerAllFromState, registerCatalogFromState } from "./provider-registrar.ts";
 import { createRequestPipeline } from "./request-pipeline.ts";
 import { createEmptyState, readState } from "./state-store.ts";
-import { runDashboard } from "./tui/dashboard.ts";
 
 interface StartupSummary {
 	startupErrors: string[];
@@ -57,7 +56,7 @@ export default async function modelManagerExtension(pi: ExtensionAPI): Promise<v
 		}
 	}
 
-	// ---- 2. session_start 激活 transport 并汇报 ----
+	// ---- 2. session_start 同步接入状态并汇报 ----
 	let notified = false;
 	const requestPipeline = createRequestPipeline();
 	pi.on("session_start", async (event, ctx) => {
@@ -72,7 +71,7 @@ export default async function modelManagerExtension(pi: ExtensionAPI): Promise<v
 				configurationBlocked = false;
 			}
 			const currentState = await readState();
-			for (const warning of await registerAllFromState(pi, currentState)) {
+			for (const warning of await registerAllFromState(pi, currentState, ctx)) {
 				transportErrors.push(t("激活模型接入失败：{warning}", { warning }));
 			}
 			// [喵喵喵]: 一次性补齐早期版本留在 models.json 里的半成品 baseUrl；
@@ -132,6 +131,7 @@ export default async function modelManagerExtension(pi: ExtensionAPI): Promise<v
 				ctx.ui.notify(t("/model-manager 需要 TUI 交互模式"), "error");
 				return;
 			}
+			const { runDashboard } = await import("./tui/dashboard.ts");
 			await runDashboard(pi, ctx);
 		},
 	});

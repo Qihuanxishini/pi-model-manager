@@ -14,6 +14,7 @@ import {
 	hasPluginManagedProviderMarker,
 	readModelsJsonSnapshot,
 	type ModelsJsonDocument,
+	type ModelsJsonSnapshot,
 	type ModelsJsonModelEntry,
 	type ModelsJsonProviderEntry,
 } from "./models-json-manager.ts";
@@ -29,6 +30,7 @@ import {
 	getStatePath as getMetadataStatePath,
 	readMetadataStateSnapshot,
 	type MetadataDocument,
+	type MetadataStateSnapshot,
 	type ParsedMetadataStateFile,
 } from "./state-metadata-store.ts";
 import type {
@@ -291,29 +293,36 @@ export async function buildStateDocumentFromSources(
 	return state;
 }
 
+export interface StateSourceSnapshot {
+	models: ModelsJsonSnapshot;
+	metadata: MetadataStateSnapshot;
+}
+
+/** 读取一致的双文件快照；事务存在或内容变化时返回 undefined，读取和解析错误仍向上传播。 */
+export async function tryReadStateSnapshot(): Promise<StateSourceSnapshot | undefined> {
+	const journalBefore = await readStableTextFileSnapshot(CONFIGURATION_TRANSACTION_PATH);
+	if (journalBefore.source !== undefined) return undefined;
+	const [models, metadata] = await Promise.all([
+		readModelsJsonSnapshot(),
+		readMetadataStateSnapshot(),
+	]);
+	const [modelsAfter, metadataAfter, journalAfter] = await Promise.all([
+		readStableTextFileSnapshot(getModelsJsonPath()),
+		readStableTextFileSnapshot(getMetadataStatePath()),
+		readStableTextFileSnapshot(CONFIGURATION_TRANSACTION_PATH),
+	]);
+	if (journalAfter.source === undefined
+		&& modelsAfter.contentHash === models.contentHash
+		&& metadataAfter.contentHash === metadata.contentHash) {
+		return { models, metadata };
+	}
+	return undefined;
+}
+
 export async function readState(): Promise<StateDocument> {
 	for (let attempt = 0; attempt < 3; attempt += 1) {
-		const journalBefore = await readStableTextFileSnapshot(CONFIGURATION_TRANSACTION_PATH);
-		if (journalBefore.source !== undefined) {
-			if (attempt < 2) await delay(10);
-			continue;
-		}
-		const [modelsSnapshot, metadataSnapshot] = await Promise.all([
-			readModelsJsonSnapshot(),
-			readMetadataStateSnapshot(),
-		]);
-		const [modelsAfter, metadataAfter, journalAfter] = await Promise.all([
-			readStableTextFileSnapshot(getModelsJsonPath()),
-			readStableTextFileSnapshot(getMetadataStatePath()),
-			readStableTextFileSnapshot(CONFIGURATION_TRANSACTION_PATH),
-		]);
-		if (
-			journalAfter.source === undefined
-			&& modelsAfter.contentHash === modelsSnapshot.contentHash
-			&& metadataAfter.contentHash === metadataSnapshot.contentHash
-		) {
-			return buildStateDocumentFromSources(modelsSnapshot.document, metadataSnapshot);
-		}
+		const snapshot = await tryReadStateSnapshot();
+		if (snapshot) return buildStateDocumentFromSources(snapshot.models.document, snapshot.metadata);
 		if (attempt < 2) await delay(10);
 	}
 	throw new Error(t("models.json/state.json 正在事务更新或持续变化；请稍后重试。"));

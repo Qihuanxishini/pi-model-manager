@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { atomicWriteText, SECURE_FILE_MODE } from "./atomic-write.ts";
 import { formatUnknownError, isObjectRecord, stringifyJson } from "./common.ts";
 import { withConfigurationLock } from "./configuration-lock.ts";
-import { hashTextContent, readStableTextFileSnapshot } from "./file-snapshot.ts";
+import { hashTextContent, readFileSignature, readStableTextFileSnapshot } from "./file-snapshot.ts";
 import { t } from "./i18n.ts";
 import {
 	MODELS_JSON_PATH,
@@ -35,7 +35,7 @@ import {
 	readMetadataStateSnapshot,
 	serializeMetadataState,
 } from "./state-metadata-store.ts";
-import { buildStateDocumentFromSources } from "./state-store.ts";
+import { buildStateDocumentFromSources, tryReadStateSnapshot, type StateSourceSnapshot } from "./state-store.ts";
 import type { StateDocument } from "./types.ts";
 
 interface PreparedConfigurationChange {
@@ -153,6 +153,8 @@ async function recoverPendingConfigurationTransactionInsideLock(): Promise<boole
 }
 
 export async function recoverPendingConfigurationTransaction(): Promise<boolean> {
+	// [喵喵喵]: 无意图文件时不取写锁；后续读配置仍检查事务与双文件签名，不能把此处当作一致性凭证。
+	if (!(await readFileSignature(TRANSACTION_PATH)).exists) return false;
 	return withConfigurationLock(recoverPendingConfigurationTransactionInsideLock);
 }
 
@@ -255,19 +257,23 @@ async function persistConfigurationInsideLock(
 	return change.document;
 }
 
+async function needsConfigurationMigration(snapshot: StateSourceSnapshot): Promise<boolean> {
+	if (snapshot.metadata.metadata.version < 5) return true;
+	const state = await buildStateDocumentFromSources(snapshot.models.document, snapshot.metadata);
+	return Object.entries(state.providers).some(([providerId, provider]) => provider.managed
+		&& provider.models.some((model) => snapshot.metadata.metadata.models[`${providerId}/${model.id}`]?.generatedClientHeaders === undefined));
+}
+
 /** 在 catalog 注册前升级地址语义，并为缺少来源记录的模型初始化生成头快照。 */
 export async function migrateManagedEndpointConfiguration(): Promise<boolean> {
+	const snapshot = await tryReadStateSnapshot();
+	if (snapshot && !(await needsConfigurationMigration(snapshot))) return false;
 	return withConfigurationLock(async () => {
 		await recoverPendingConfigurationTransactionInsideLock();
-		const metadataSnapshot = await readMetadataStateSnapshot();
-		const migrateEndpoints = metadataSnapshot.metadata.version < 5;
-		if (!migrateEndpoints) {
-			const modelsSnapshot = await readModelsJsonSnapshot();
-			const state = await buildStateDocumentFromSources(modelsSnapshot.document, metadataSnapshot);
-			const missingHeaders = Object.entries(state.providers).some(([providerId, provider]) => provider.managed
-				&& provider.models.some((model) => metadataSnapshot.metadata.models[`${providerId}/${model.id}`]?.generatedClientHeaders === undefined));
-			if (!missingHeaders) return false;
-		}
+		// [喵喵喵]: 锁外快照只用于免写判断；等待锁期间配置可能已被其它会话迁移，写入前须重新判定。
+		const [models, metadata] = await Promise.all([readModelsJsonSnapshot(), readMetadataStateSnapshot()]);
+		if (!(await needsConfigurationMigration({ models, metadata }))) return false;
+		const migrateEndpoints = metadata.metadata.version < 5;
 		await persistConfigurationInsideLock(
 			(document) => ({ document, changedProviderIds: [], removedProviderIds: [] }),
 			(source) => source,
