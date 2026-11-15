@@ -1,5 +1,6 @@
 // 将配置交给 Pi 构造原生 Provider，插件仅包装其请求传输。
 
+import { isDeepStrictEqual } from "node:util";
 import { ModelRuntime, type ExtensionAPI, type ProviderConfig } from "@earendil-works/pi-coding-agent";
 import { lazyStream, type Provider } from "@earendil-works/pi-ai";
 import { isBuiltinProviderId } from "./builtin-model-catalog.ts";
@@ -40,18 +41,46 @@ function buildProviderConfig(
 	};
 }
 
-async function buildNativeProvider(providerId: string, provider: StoredProvider, config: ProviderConfig): Promise<Provider> {
+interface ProviderRefreshSnapshot {
+	provider: StoredProvider | undefined;
+	requestHeaderProfiles: Record<string, StoredRequestHeaderProfile>;
+	clientHeaderCaptures: Partial<Record<BuiltInClientHeaderProfileId, StoredClientHeaderCapture>>;
+}
+
+function createProviderRefreshSnapshot(
+	providerId: string,
+	providers: Record<string, StoredProvider>,
+	requestHeaderProfiles: Record<string, StoredRequestHeaderProfile>,
+	clientHeaderCaptures: Partial<Record<BuiltInClientHeaderProfileId, StoredClientHeaderCapture>>,
+): ProviderRefreshSnapshot {
+	const provider = providers[providerId];
+	const profileId = provider?.clientHeaderProfile === "custom" ? provider.requestHeaderProfileId : undefined;
+	const profile = profileId ? requestHeaderProfiles[profileId] : undefined;
+	return {
+		provider,
+		requestHeaderProfiles: profileId && profile ? { [profileId]: profile } : {},
+		clientHeaderCaptures,
+	};
+}
+
+async function buildNativeProvider(providerId: string, provider: StoredProvider, config: ProviderConfig, signal?: AbortSignal): Promise<Provider> {
+	signal?.throwIfAborted();
 	// [喵喵喵]: 复用 Pi 的认证解析与多协议分派；临时 runtime 不读取用户认证或模型文件，也不刷新网络目录。
-	const runtime = await ModelRuntime.create({ credentials: emptyCredentialStore, modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
+	const runtime = await ModelRuntime.create({ credentials: emptyCredentialStore, modelsPath: null, allowModelNetwork: false, refreshOnCreate: false, signal });
+	signal?.throwIfAborted();
 	runtime.registerProvider(providerId, config);
 	const native = runtime.getProvider(providerId);
 	if (!native) throw new Error(t("无法构建接入：{providerId}", { providerId }));
 	return createProviderTransport(native, provider);
 }
 
-function createRefreshableProvider(providerId: string, native: Provider): Provider {
+function createRefreshableProvider(
+	providerId: string,
+	native: Provider,
+	initialSnapshot: ProviderRefreshSnapshot,
+): Provider {
 	let current: Provider | undefined = native;
-	let refreshedState: StateDocument | undefined;
+	let refreshedSnapshot = initialSnapshot;
 	// [喵喵喵]: Pi 合成层会捕获 apiKey 对象，认证方法也必须通过稳定入口委派，不能只用 auth getter 切换对象。
 	const auth: Provider["auth"] = { apiKey: {
 		name: native.auth.apiKey?.name ?? native.name,
@@ -78,13 +107,24 @@ function createRefreshableProvider(providerId: string, native: Provider): Provid
 		async refreshModels(context) {
 			if (context.allowNetwork || context.signal.aborted) return;
 			const state = await readCachedState();
-			if (state === refreshedState) return;
-			const provider = state.providers[providerId];
-			const next = provider?.managed && provider.models.length > 0
-				? await buildNativeProvider(providerId, provider, buildProviderConfig(provider, state.requestHeaderProfiles, state.clientHeaderCaptures))
+			if (context.signal.aborted) return;
+			const snapshot = createProviderRefreshSnapshot(
+				providerId,
+				state.providers,
+				state.requestHeaderProfiles,
+				state.clientHeaderCaptures,
+			);
+			if (isDeepStrictEqual(snapshot, refreshedSnapshot)) return;
+			const provider = snapshot.provider;
+			const config = provider?.managed && provider.models.length > 0
+				? buildProviderConfig(provider, snapshot.requestHeaderProfiles, snapshot.clientHeaderCaptures)
 				: undefined;
+			const next = provider && config
+				? await buildNativeProvider(providerId, provider, config, context.signal)
+				: undefined;
+			if (context.signal.aborted) return;
 			// [喵喵喵]: 原生刷新保留 provider 实例；目录、认证和传输必须经同一次 generation 校验后切换，不另写模型缓存。
-			await context.publish({ update: () => { current = next; refreshedState = state; } });
+			await context.publish({ update: () => { current = next; refreshedSnapshot = snapshot; } });
 		},
 		stream: forward(false) as Provider["stream"],
 		streamSimple: forward(true),
@@ -211,7 +251,13 @@ export async function reconcileProvider(
 
 	const config = buildProviderConfig(provider, requestHeaderProfiles, clientHeaderCaptures);
 	const native = await buildNativeProvider(providerId, provider, config);
-	replaceManagedProviderConfig(pi, providerId, createRefreshableProvider(providerId, native));
+	const initialSnapshot = createProviderRefreshSnapshot(
+		providerId,
+		{ [providerId]: provider },
+		requestHeaderProfiles,
+		clientHeaderCaptures,
+	);
+	replaceManagedProviderConfig(pi, providerId, createRefreshableProvider(providerId, native, initialSnapshot));
 }
 
 async function reconcileAllFromState(

@@ -14,6 +14,8 @@ interface StateSignature {
 }
 
 let cachedState: { signature: StateSignature; state: StateDocument } | undefined;
+let pendingRead: Promise<StateDocument> | undefined;
+let cacheGeneration = 0;
 
 
 async function readStateSignature(): Promise<StateSignature> {
@@ -32,9 +34,21 @@ function sameStateSignature(a: StateSignature, b: StateSignature): boolean {
 
 export function invalidateStateCache(): void {
 	cachedState = undefined;
+	pendingRead = undefined;
+	cacheGeneration += 1;
 }
 
-export async function readCachedState(): Promise<StateDocument> {
+export function readCachedState(): Promise<StateDocument> {
+	if (!pendingRead) {
+		const generation = cacheGeneration;
+		pendingRead = loadCachedState(generation).finally(() => {
+			if (generation === cacheGeneration) pendingRead = undefined;
+		});
+	}
+	return pendingRead;
+}
+
+async function loadCachedState(generation: number): Promise<StateDocument> {
 	const signature = await readStateSignature();
 	if (cachedState && sameStateSignature(cachedState.signature, signature)) {
 		return cachedState.state;
@@ -46,7 +60,8 @@ export async function readCachedState(): Promise<StateDocument> {
 		const state = await readState();
 		const after = await readStateSignature();
 		if (sameStateSignature(before, after)) {
-			cachedState = { signature: after, state };
+			// [喵喵喵]: 失效前的读取可完成原调用，但不能重新填充当前缓存。
+			if (generation === cacheGeneration) cachedState = { signature: after, state };
 			return state;
 		}
 	}
