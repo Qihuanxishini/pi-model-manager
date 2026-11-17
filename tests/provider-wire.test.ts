@@ -97,7 +97,7 @@ test("真实 Pi：客户端画像、协议 beta、跨 profile 切换及直连/�
 		for (const httpProxyEnabled of [false, true]) {
 			const claude = { ...provider("anthropic-messages", "http://switch.invalid/v1"), clientHeaderProfile: "claude-code" as const };
 			claude.models[0]!.compat = { forceAdaptiveThinking: true, supportsMidConvoEffort: true };
-			claude.models.push({ ...claude.models[0]!, id: "explicit-beta", headers: { "Anthropic-Beta": "user-beta" } });
+			claude.models.push({ ...claude.models[0]!, id: "explicit-beta", headers: { "Anthropic-Beta": "user-beta", "X-Claude-Code-Session-Id": "model-session" } });
 			claude.models.push({ ...claude.models[0]!, id: "edited-beta", headers: { "Anthropic-Beta": "edited-beta" } });
 			const codex = { ...provider("openai-responses", "http://switch.invalid/v1"), clientHeaderProfile: "recommended" as const };
 			codex.models.push({ ...codex.models[0]!, id: "another-model" });
@@ -130,8 +130,13 @@ test("真实 Pi：客户端画像、协议 beta、跨 profile 切换及直连/�
 			const headerHook = (pi: any) => {
 				pi.on("before_provider_headers", (event: any, ctx: any) => {
 					if (ctx.model?.provider === "claude") {
-						if (hookMode === "override") event.headers["Anthropic-Beta"] = "hook-beta";
-						if (hookMode === "delete") event.headers["anthropic-beta"] = null;
+						if (hookMode === "override") Object.assign(event.headers, {
+							"Anthropic-Beta": "hook-beta", "X-Claude-Code-Session-Id": "hook-session",
+						});
+						if (hookMode === "delete") {
+							event.headers["anthropic-beta"] = null;
+							event.headers["X-Claude-Code-SESSION-ID"] = null;
+						}
 						return;
 					}
 					if (ctx.model?.provider !== "codex") return;
@@ -238,26 +243,42 @@ test("真实 Pi：客户端画像、协议 beta、跨 profile 切换及直连/�
 				await session.prompt("Keep explicit beta");
 				assert.equal(session.getLastAssistantText(), "ok");
 				assert.equal(captured.at(-1)!.headers["anthropic-beta"], "user-beta");
+				assert.equal(captured.at(-1)!.headers["x-claude-code-session-id"], "model-session");
 				await session.setModel(runtime.getModel("claude", claude.models[0]!.id)!);
+				const claudeHookSessionHeaders: unknown[] = [];
 				for (const mode of ["override", "delete"] as const) {
 					hookMode = mode;
 					await session.prompt("Apply the Claude request header hook");
 					assert.equal(session.getLastAssistantText(), "ok");
 					assert.equal(captured.at(-1)!.headers["anthropic-beta"], mode === "override" ? "hook-beta" : undefined);
+					assert.equal(JSON.parse(captured.at(-1)!.body.metadata.user_id).session_id, claudeSession);
+					claudeHookSessionHeaders.push(captured.at(-1)!.headers["x-claude-code-session-id"]);
 				}
+				assert.deepEqual(claudeHookSessionHeaders, ["hook-session", undefined], "会话头必须保留钩子覆盖及删除，且不改写正文 metadata");
 				hookMode = "none";
 				const refreshed = JSON.parse(await readFile(modelsPath, "utf8"));
-				for (const beta of ["refreshed-beta", undefined]) {
+				for (const [beta, providerSessionId, modelSessionId] of [
+					["refreshed-beta", "provider-session", undefined],
+					[undefined, "provider-session", "model-session"],
+					[undefined, undefined, undefined],
+				] as const) {
 					const model = refreshed.providers.claude.models[0];
 					if (beta) model.headers["anthropic-beta"] = beta;
 					else delete model.headers["anthropic-beta"];
+					refreshed.providers.claude.headers ??= {};
+					if (providerSessionId) refreshed.providers.claude.headers["X-Claude-Code-Session-Id"] = providerSessionId;
+					else delete refreshed.providers.claude.headers["X-Claude-Code-Session-Id"];
+					if (modelSessionId) model.headers["X-Claude-Code-SESSION-ID"] = modelSessionId;
+					else delete model.headers["X-Claude-Code-SESSION-ID"];
 					await writeFile(modelsPath, JSON.stringify(refreshed));
 					await runtime.refresh({ allowNetwork: false });
 					await session.setModel(runtime.getModel("claude", claude.models[0]!.id)!);
-					await session.prompt("Use refreshed beta configuration");
+					await session.prompt("Use refreshed request header configuration");
 					assert.equal(session.getLastAssistantText(), "ok");
 					if (beta) assert.equal(captured.at(-1)!.headers["anthropic-beta"], beta);
 					else assert.match(String(captured.at(-1)!.headers["anthropic-beta"]), /mid-conversation-output-config-2026-07-01.*claude-code-20250219/);
+					assert.equal(captured.at(-1)!.headers["x-claude-code-session-id"], modelSessionId ?? providerSessionId ?? claudeSession);
+					assert.equal(JSON.parse(captured.at(-1)!.body.metadata.user_id).session_id, claudeSession);
 				}
 				const uncached = await runtime.streamSimple(runtime.getModel("codex", "gpt-5.2")!, context as any, { sessionId: manager.getSessionId(), cacheRetention: "none", onPayload: (payload: any) => ({ ...payload, model: "routed-model", service_tier: "ultrafast" }) }).result();
 				assert.equal(uncached.stopReason, "stop", uncached.errorMessage);

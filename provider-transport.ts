@@ -152,17 +152,22 @@ export function createProviderTransport(native: Provider, provider: StoredProvid
 				request = new Request(url, request);
 				if (endpoint.profile === "claude-code") {
 					// [喵喵喵]: 此时 Pi 已按正文能力生成 beta；显式配置及头钩子的 null 删除均优先于身份补充。
-					const hasExplicitBeta = endpoint.explicitHeaderNames.has("anthropic-beta")
-						|| [model.headers, options.headers].some((headers) => Object.keys(headers ?? {}).some((name) => name.toLowerCase() === "anthropic-beta"));
-					if (!hasExplicitBeta) {
+					const explicitHeaderNames = new Set([
+						...endpoint.explicitHeaderNames,
+						...Object.keys(model.headers ?? {}).map((name) => name.toLowerCase()),
+						...Object.keys(options.headers ?? {}).map((name) => name.toLowerCase()),
+					]);
+					if (!explicitHeaderNames.has("anthropic-beta")) {
 						const betas = new Set((request.headers.get("anthropic-beta") ?? "").split(",").map((beta) => beta.trim()).filter(Boolean));
 						betas.add("claude-code-20250219");
 						request.headers.set("anthropic-beta", [...betas].join(","));
 					}
-					// [喵喵喵]: 从已构造的 body 取会话 ID，避免重试或会话重置后读取全局状态造成头与 metadata 错配。
-					const payload: unknown = await request.clone().json().catch(() => undefined);
-					const sessionId = getClaudeCodeSessionId(payload);
-					if (sessionId) request.headers.set("x-claude-code-session-id", sessionId);
+					if (!explicitHeaderNames.has("x-claude-code-session-id")) {
+						// [喵喵喵]: 从已构造的 body 取会话 ID，避免重试或会话重置后读取全局状态造成头与 metadata 错配。
+						const payload: unknown = await request.clone().json().catch(() => undefined);
+						const sessionId = getClaudeCodeSessionId(payload);
+						if (sessionId) request.headers.set("x-claude-code-session-id", sessionId);
+					}
 				}
 			}
 			if (usesCodexHeaders) {
