@@ -9,7 +9,6 @@ import { join } from "node:path";
 import { cloneJson, isObjectRecord, stringifyJson, stripJsonNoise } from "./common.ts";
 import { readStableTextFileSnapshot, type FileSignature } from "./file-snapshot.ts";
 import { t } from "./i18n.ts";
-import { mergeCompatSettings } from "./compat-settings.ts";
 import { getClientHeadersForProfile, mergeModelRequestHeaders, resolveClientHeaderProfile, resolveProviderCustomHeaders } from "./presets/client-headers.ts";
 import type { ModelsJsonDocument } from "./models-json-manager.ts";
 import { getGeneratedCodexClientHeaders } from "./presets/codex-client-headers.ts";
@@ -432,8 +431,7 @@ function extractModelMetadata(model: StoredModel, provider: StoredProvider, stat
 	if (model.openAIServiceTier) metadata.openAIServiceTier = model.openAIServiceTier;
 	if (state) {
 		const headers = mergeModelRequestHeaders(undefined, getClientHeadersForProfile(provider.clientHeaderProfile, api,
-			resolveProviderCustomHeaders(provider, state.requestHeaderProfiles), state.clientHeaderCaptures,
-			mergeCompatSettings(provider.compat, model.compat))) ?? {};
+			resolveProviderCustomHeaders(provider, state.requestHeaderProfiles), state.clientHeaderCaptures)) ?? {};
 		const explicit = mergeModelRequestHeaders(provider.headers, model.headers) ?? {};
 		const profile = resolveClientHeaderProfile(provider.clientHeaderProfile, api);
 		metadata.generatedClientHeaders = profile === "codex-cli"

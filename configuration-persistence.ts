@@ -34,9 +34,11 @@ import {
 	STATE_DIR,
 	readMetadataStateSnapshot,
 	serializeMetadataState,
+	type MetadataDocument,
 } from "./state-metadata-store.ts";
+import { getClientHeadersForProfile, resolveClientHeaderProfile } from "./presets/client-headers.ts";
 import { buildStateDocumentFromSources, tryReadStateSnapshot, type StateSourceSnapshot } from "./state-store.ts";
-import type { StateDocument } from "./types.ts";
+import type { ApiKind, StateDocument } from "./types.ts";
 
 interface PreparedConfigurationChange {
 	document: StateDocument;
@@ -211,6 +213,41 @@ type ModelsDocumentMutation = (
 	change: PreparedConfigurationChange,
 ) => ModelsJsonDocument;
 
+function migrateGeneratedClaudeCodeBetas(
+	source: ModelsJsonDocument,
+	state: StateDocument,
+	metadata: MetadataDocument,
+): ModelsJsonDocument {
+	let result = source;
+	for (const [providerId, provider] of Object.entries(state.providers)) {
+		const entry = source.providers[providerId];
+		if (!provider.managed || !entry?.models) continue;
+		let changed = false;
+		const models = entry.models.map((model) => {
+			if (resolveClientHeaderProfile(provider.clientHeaderProfile, (model.api ?? provider.api) as ApiKind) !== "claude-code") return model;
+			const generated = metadata.models[`${providerId}/${model.id}`]?.generatedClientHeaders;
+			const beta = Object.entries(generated ?? {}).find(([name]) => name.toLowerCase() === "anthropic-beta");
+			if (!beta) return model;
+			const owned = Object.entries(model.headers ?? {}).filter(([name, value]) => name.toLowerCase() === "anthropic-beta" && value === beta[1]);
+			if (owned.length === 0) return model;
+			// [喵喵喵]: 只删除来源快照证明仍属插件的旧值；不按 beta 内容猜测归属，不改写模型其它字段。
+			const headers = { ...model.headers };
+			for (const [name] of owned) delete headers[name];
+			const next = { ...model };
+			if (Object.keys(headers).length > 0) next.headers = headers;
+			else delete next.headers;
+			changed = true;
+			return next;
+		});
+		if (changed) result = { ...result, providers: { ...result.providers, [providerId]: { ...entry, models } } };
+	}
+	return result;
+}
+
+function hasCapturedClaudeCodeBeta(state: StateDocument): boolean {
+	return Object.keys(state.clientHeaderCaptures["claude-code"]?.headers ?? {}).some((name) => name.toLowerCase() === "anthropic-beta");
+}
+
 async function persistConfigurationInsideLock(
 	prepare: PrepareConfigurationChange,
 	mutateModels: ModelsDocumentMutation,
@@ -223,6 +260,15 @@ async function persistConfigurationInsideLock(
 		readMetadataStateSnapshot(),
 	]);
 	const latest = await buildStateDocumentFromSources(modelsSnapshot.document, metadataSnapshot);
+	if (hasCapturedClaudeCodeBeta(latest)) {
+		latest.clientHeaderCaptures = {
+			...latest.clientHeaderCaptures,
+			"claude-code": {
+				...latest.clientHeaderCaptures["claude-code"]!,
+				headers: getClientHeadersForProfile("claude-code", "anthropic-messages", {}, latest.clientHeaderCaptures)!,
+			},
+		};
+	}
 	const sourceWithOwnershipMarkers = metadataSnapshot.requirePluginManagedProviderMarker
 		? modelsSnapshot.document
 		: markManagedProvidersInDoc(modelsSnapshot.document, latest.managedProviderIds);
@@ -232,9 +278,10 @@ async function persistConfigurationInsideLock(
 		[],
 		Object.keys(metadataSnapshot.legacyProviders),
 	);
+	const sourceWithCurrentHeaders = migrateGeneratedClaudeCodeBetas(sourceWithLegacyProviders, latest, metadataSnapshot.metadata);
 	const migratedSource = metadataSnapshot.metadata.version < 5
-		? migrateManagedBaseUrls(latest, sourceWithLegacyProviders)
-		: sourceWithLegacyProviders;
+		? migrateManagedBaseUrls(latest, sourceWithCurrentHeaders)
+		: sourceWithCurrentHeaders;
 	const existingProviderIds = new Set(Object.keys(latest.providers));
 	const change = prepare(latest);
 	// [喵喵喵]: 原生扩展可只保存覆盖项而不列 models；目录过滤掉的节点仍占用 ID，不允许新建时覆盖。
@@ -260,11 +307,13 @@ async function persistConfigurationInsideLock(
 async function needsConfigurationMigration(snapshot: StateSourceSnapshot): Promise<boolean> {
 	if (snapshot.metadata.metadata.version < 5) return true;
 	const state = await buildStateDocumentFromSources(snapshot.models.document, snapshot.metadata);
+	if (hasCapturedClaudeCodeBeta(state)
+		|| migrateGeneratedClaudeCodeBetas(snapshot.models.document, state, snapshot.metadata.metadata) !== snapshot.models.document) return true;
 	return Object.entries(state.providers).some(([providerId, provider]) => provider.managed
 		&& provider.models.some((model) => snapshot.metadata.metadata.models[`${providerId}/${model.id}`]?.generatedClientHeaders === undefined));
 }
 
-/** 在 catalog 注册前升级地址语义，并为缺少来源记录的模型初始化生成头快照。 */
+/** 在 catalog 注册前升级地址语义、清理自动画像 beta，并初始化缺少的生成头快照。 */
 export async function migrateManagedEndpointConfiguration(): Promise<boolean> {
 	const snapshot = await tryReadStateSnapshot();
 	if (snapshot && !(await needsConfigurationMigration(snapshot))) return false;

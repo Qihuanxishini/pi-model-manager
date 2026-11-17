@@ -6,11 +6,8 @@
 import { cloneStringRecord, hasStringRecordEntries } from "../common.ts";
 import { buildCodexClientHeaders } from "./codex-client-headers.ts";
 import { t } from "../i18n.ts";
-import type { ApiKind, BuiltInClientHeaderProfileId, ClientHeaderProfileId, CompatSettings, StoredClientHeaderCapture, StoredRequestHeaderProfile } from "../types.ts";
+import type { ApiKind, BuiltInClientHeaderProfileId, ClientHeaderProfileId, StoredClientHeaderCapture, StoredRequestHeaderProfile } from "../types.ts";
 import { CLAUDE_CODE_CLIENT_HEADERS, CODEX_CLI_CLIENT_HEADERS } from "./builtin-client-headers.ts";
-
-const ANTHROPIC_INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
-
 
 export function getClientHeaderProfileLabel(profile: ClientHeaderProfileId): string {
 	if (profile === "recommended") return t("自动推荐");
@@ -18,30 +15,6 @@ export function getClientHeaderProfileLabel(profile: ClientHeaderProfileId): str
 	if (profile === "custom") return t("自定义请求头");
 	return profile === "claude-code" ? "ClaudeCode" : "Codex";
 }
-
-function removeAnthropicBetaFeature(headers: Record<string, string>, feature: string): void {
-	const betaHeaderKey = Object.keys(headers).find((name) => name.toLowerCase() === "anthropic-beta");
-	if (!betaHeaderKey) return;
-	const retained = headers[betaHeaderKey]!
-		.split(",")
-		.map((value) => value.trim())
-		.filter((value) => value && value !== feature);
-	if (retained.length > 0) headers[betaHeaderKey] = retained.join(",");
-	else delete headers[betaHeaderKey];
-}
-
-function cloneHeadersForCompat(
-	headers: Record<string, string>,
-	api: ApiKind,
-	compat?: CompatSettings,
-): Record<string, string> {
-	const cloned = cloneStringRecord(headers);
-	if (api === "anthropic-messages" && compat?.forceAdaptiveThinking === true) {
-		removeAnthropicBetaFeature(cloned, ANTHROPIC_INTERLEAVED_THINKING_BETA);
-	}
-	return cloned;
-}
-
 
 /** 按大小写不敏感的字段名合并请求头，后者覆盖前者。 */
 export function mergeModelRequestHeaders(
@@ -92,7 +65,6 @@ export function getClientHeadersForProfile(
 	api: ApiKind,
 	customHeaders: Record<string, string>,
 	clientHeaderCaptures: Partial<Record<BuiltInClientHeaderProfileId, StoredClientHeaderCapture>> = {},
-	compat?: CompatSettings,
 ): Record<string, string> | undefined {
 	const resolved = resolveClientHeaderProfile(profile, api);
 	if (resolved === "disabled") return undefined;
@@ -100,7 +72,8 @@ export function getClientHeadersForProfile(
 		const headers = hasStringRecordEntries(clientHeaderCaptures[resolved]?.headers)
 			? clientHeaderCaptures[resolved]!.headers
 			: CLAUDE_CODE_CLIENT_HEADERS;
-		return cloneHeadersForCompat(headers, api, compat);
+		// [喵喵喵]: 显式 beta 会禁用 Pi 的协议能力推导；抓包缓存只提供身份字段，不重放其条件性 beta。
+		return Object.fromEntries(Object.entries(headers).filter(([name]) => name.toLowerCase() !== "anthropic-beta"));
 	}
 	if (resolved === "codex-cli") {
 		const headers = hasStringRecordEntries(clientHeaderCaptures[resolved]?.headers)

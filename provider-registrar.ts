@@ -162,13 +162,11 @@ export function buildModelRequestHeaders(
 		? resolveProviderCustomHeaders(provider, requestHeaderProfiles)
 		: {};
 	const effectiveApi = asManagedApi(model.api, provider.api);
-	const effectiveCompat = mergeCompatSettings(provider.compat, model.compat);
 	const profileHeaders = getClientHeadersForProfile(
 		provider.clientHeaderProfile,
 		effectiveApi,
 		customHeaders,
 		clientHeaderCaptures,
-		effectiveCompat,
 	);
 	const explicitHeaders = mergeModelRequestHeaders(provider.headers, model.headers);
 	if (resolveClientHeaderProfile(provider.clientHeaderProfile, effectiveApi) === "codex-cli") {

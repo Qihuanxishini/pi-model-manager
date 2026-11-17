@@ -5,7 +5,6 @@
 
 import { setTimeout as delay } from "node:timers/promises";
 import { getBuiltinProviderDefaults } from "./builtin-model-catalog.ts";
-import { mergeCompatSettings } from "./compat-settings.ts";
 import { cloneJson, cloneStringRecord, hasStringRecordEntries, isObjectRecord } from "./common.ts";
 import { readStableTextFileSnapshot } from "./file-snapshot.ts";
 import { t } from "./i18n.ts";
@@ -35,7 +34,6 @@ import {
 } from "./state-metadata-store.ts";
 import type {
 	ApiKind,
-	CompatSettings,
 	ModelInputKind,
 	StateDocument,
 	StoredModel,
@@ -118,7 +116,6 @@ function buildStoredModelFromModelsJson(
 	providerApi: ApiKind,
 	providerBaseUrl: string,
 	providerNativeBaseUrl: string,
-	providerCompat: CompatSettings | undefined,
 	providerHeaders: Record<string, string> | undefined,
 	managed: boolean,
 	clientHeaderProfile: StoredProvider["clientHeaderProfile"],
@@ -130,14 +127,12 @@ function buildStoredModelFromModelsJson(
 	const explicitApi = typeof model.api === "string" && model.api ? model.api : undefined;
 	const effectiveApi = asApiKind(explicitApi) ?? providerApi;
 	const modelCompat = model.compat ? cloneJson(model.compat) : undefined;
-	const effectiveCompat = mergeCompatSettings(providerCompat, modelCompat);
 	const profileHeaders = managed
 		? getClientHeadersForProfile(
 			clientHeaderProfile,
 			effectiveApi,
 			customClientHeaders,
 			metadata.clientHeaderCaptures,
-			effectiveCompat,
 		)
 		: undefined;
 	const modelMetadata = metadata.models[getFullModelId(providerId, model.id)];
@@ -210,7 +205,6 @@ async function buildStoredProviderFromModelsJson(
 			api,
 			baseUrl,
 			nativeBaseUrl,
-			providerCompat,
 			entry.headers,
 			managed,
 			clientHeaderProfile,

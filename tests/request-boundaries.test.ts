@@ -18,8 +18,8 @@ const model: StoredModel = { id: "claude", reasoning: true, input: ["text"], con
 
 test("自定义 beta 保留原值，显式字段覆盖内置模板且同名头大小写不产生重复", () => {
 	const custom = { "Anthropic-Beta": "interleaved-thinking-2025-05-14, custom-beta", "User-Agent": "explicit-client" };
-	assert.deepEqual(getClientHeadersForProfile("custom", "anthropic-messages", custom, {}, { forceAdaptiveThinking: true }), custom);
-	assert.equal(getClientHeadersForProfile("claude-code", "anthropic-messages", {}, {}, { forceAdaptiveThinking: true })?.["anthropic-beta"]?.includes("interleaved-thinking"), false);
+	assert.deepEqual(getClientHeadersForProfile("custom", "anthropic-messages", custom), custom);
+	assert.equal(getClientHeadersForProfile("claude-code", "anthropic-messages", {})?.["anthropic-beta"], undefined);
 	const provider: StoredProvider = {
 		name: "Gateway", api: "anthropic-messages", baseUrl: "https://gw.test/v1", managed: true,
 		clientHeaderProfile: "recommended", headers: { "ANTHROPIC-BETA": "provider-beta", "User-Agent": "provider-client" },

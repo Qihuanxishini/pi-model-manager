@@ -7,7 +7,7 @@ import { injectClaudeCodeMetadata, resetClaudeCodeMetadataSession } from "../cla
 import { closeLocalProxyServer } from "../local-proxy-service.ts";
 import { CODEX_CLI_CLIENT_HEADERS } from "../presets/builtin-client-headers.ts";
 import type { ApiKind, StateDocument, StoredProvider } from "../types.ts";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const agentDir = await mkdtemp(resolve(".test-provider-wire-"));
@@ -70,7 +70,7 @@ async function writeStateFixture(state: StateDocument): Promise<string> {
 	return MODELS_JSON_PATH;
 }
 
-test("真实 Pi：Codex 画像、跨 profile 切换、禁缓存及直连/代理保持请求级隔离", { skip: !realRuntime, timeout: 30_000 }, async () => {
+test("真实 Pi：客户端画像、协议 beta、跨 profile 切换及直连/代理保持请求级隔离", { skip: !realRuntime, timeout: 30_000 }, async () => {
 	const { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } = await import("@earendil-works/pi-coding-agent");
 	const { default: extension } = await import("../index.ts");
 	const captured: { headers: Record<string, unknown>; body: any }[] = [];
@@ -96,6 +96,9 @@ test("真实 Pi：Codex 画像、跨 profile 切换、禁缓存及直连/代理�
 	try {
 		for (const httpProxyEnabled of [false, true]) {
 			const claude = { ...provider("anthropic-messages", "http://switch.invalid/v1"), clientHeaderProfile: "claude-code" as const };
+			claude.models[0]!.compat = { forceAdaptiveThinking: true, supportsMidConvoEffort: true };
+			claude.models.push({ ...claude.models[0]!, id: "explicit-beta", headers: { "Anthropic-Beta": "user-beta" } });
+			claude.models.push({ ...claude.models[0]!, id: "edited-beta", headers: { "Anthropic-Beta": "edited-beta" } });
 			const codex = { ...provider("openai-responses", "http://switch.invalid/v1"), clientHeaderProfile: "recommended" as const };
 			codex.models.push({ ...codex.models[0]!, id: "another-model" });
 			codex.models.push({ ...provider("openai-completions", "unused").models[0]!, api: "openai-completions" });
@@ -110,13 +113,27 @@ test("真实 Pi：Codex 画像、跨 profile 切换、禁缓存及直连/代理�
 			const configs = Object.fromEntries(Object.entries({ claude, codex, custom, disabled }).map(([id, config]) => [id, { ...config, httpProxyEnabled, httpProxyUrl: localUrl }]));
 			const state = { version: 2 as const, providers: configs, managedProviderIds: Object.keys(configs), requestHeaderProfiles: {}, clientHeaderCaptures: {
 				"codex-cli": { capturedAt: "fixture", headers: { ...CODEX_CLI_CLIENT_HEADERS } },
+				"claude-code": { capturedAt: "fixture", headers: { "user-agent": "claude-cli/2.1.326 (external, sdk-cli)", "x-stainless-lang": "js", "Anthropic-Beta": "old-captured-beta" } },
 			} };
 			const modelsPath = await writeStateFixture(state);
+			const { STATE_PATH } = await import("../state-metadata-store.ts");
+			const savedModels = JSON.parse(await readFile(modelsPath, "utf8"));
+			const savedMetadata = JSON.parse(await readFile(STATE_PATH, "utf8"));
+			savedModels.providers.claude.models[0].headers["Anthropic-Beta"] = "old-generated-beta";
+			savedMetadata.models[`claude/${claude.models[0]!.id}`].generatedClientHeaders["anthropic-beta"] = "old-generated-beta";
+			savedMetadata.models["claude/edited-beta"].generatedClientHeaders["anthropic-beta"] = "old-generated-beta";
+			await writeFile(modelsPath, JSON.stringify(savedModels));
+			await writeFile(STATE_PATH, JSON.stringify(savedMetadata));
 			const runtime = await ModelRuntime.create({ credentials: emptyCredentials, modelsPath, allowModelNetwork: false, refreshOnCreate: false });
 			const settingsManager = SettingsManager.inMemory({ retry: { enabled: false }, compaction: { enabled: false } });
 			let hookMode: "none" | "override" | "delete" = "none";
 			const headerHook = (pi: any) => {
 				pi.on("before_provider_headers", (event: any, ctx: any) => {
+					if (ctx.model?.provider === "claude") {
+						if (hookMode === "override") event.headers["Anthropic-Beta"] = "hook-beta";
+						if (hookMode === "delete") event.headers["anthropic-beta"] = null;
+						return;
+					}
 					if (ctx.model?.provider !== "codex") return;
 					if (hookMode === "override") Object.assign(event.headers, {
 						"user-agent": "codex_cli_rs/9.9.9 (hook) unknown", originator: "hook-origin", version: "hook-version",
@@ -128,6 +145,11 @@ test("真实 Pi：Codex 画像、跨 profile 切换、禁缓存及直连/代理�
 			const resourceLoader = new DefaultResourceLoader({ cwd: agentDir, agentDir, settingsManager, extensionFactories: [extension, headerHook], noSkills: true, noThemes: true, noPromptTemplates: true, noContextFiles: true });
 			await resourceLoader.reload();
 			assert.deepEqual(resourceLoader.getExtensions().errors, []);
+			delete savedModels.providers.claude.models[0].headers["Anthropic-Beta"];
+			assert.deepEqual(JSON.parse(await readFile(modelsPath, "utf8")), savedModels, "迁移只移除已认领的旧 beta，不改用户覆盖或其它模型字段");
+			const migrated = JSON.parse(await readFile(STATE_PATH, "utf8"));
+			assert.equal(migrated.models[`claude/${claude.models[0]!.id}`].generatedClientHeaders["anthropic-beta"], undefined);
+			assert.equal(migrated.clientHeaderCaptures["claude-code"].headers["Anthropic-Beta"], undefined);
 			const manager = SessionManager.inMemory(agentDir);
 			const { session } = await createAgentSession({ cwd: agentDir, agentDir, modelRuntime: runtime, model: runtime.getModel("claude", claude.models[0]!.id)!, resourceLoader, settingsManager, sessionManager: manager, tools: [] });
 			const errors: string[] = [];
@@ -149,6 +171,13 @@ test("真实 Pi：Codex 画像、跨 profile 切换、禁缓存及直连/代理�
 						assert.match(String(headers["user-agent"]), /^claude-cli\//);
 						assert.equal(headers["x-stainless-lang"], "js");
 						assert.equal(headers.originator, undefined);
+						const betas = String(headers["anthropic-beta"]).split(",").map((beta) => beta.trim());
+						assert.ok(betas.includes("mid-conversation-output-config-2026-07-01"), "保留 Pi 根据 compat 生成的协议 beta");
+						assert.ok(betas.includes("thinking-binding-controls-2026-08-01"));
+						assert.equal(betas.filter((beta) => beta === "claude-code-20250219").length, 1);
+						assert.equal(betas.includes("per-turn-control-2026-07-01"), false);
+						assert.equal(betas.includes("context-1m-2025-08-07"), false);
+						assert.equal(betas.includes("interleaved-thinking-2025-05-14"), false);
 					} else if (id === "codex") {
 						assert.equal(headers["x-claude-code-session-id"], undefined);
 						assert.equal(body.metadata?.user_id, undefined);
@@ -205,6 +234,31 @@ test("真实 Pi：Codex 画像、跨 profile 切换、禁缓存及直连/代理�
 					}
 				}
 				hookMode = "none";
+				await session.setModel(runtime.getModel("claude", "explicit-beta")!);
+				await session.prompt("Keep explicit beta");
+				assert.equal(session.getLastAssistantText(), "ok");
+				assert.equal(captured.at(-1)!.headers["anthropic-beta"], "user-beta");
+				await session.setModel(runtime.getModel("claude", claude.models[0]!.id)!);
+				for (const mode of ["override", "delete"] as const) {
+					hookMode = mode;
+					await session.prompt("Apply the Claude request header hook");
+					assert.equal(session.getLastAssistantText(), "ok");
+					assert.equal(captured.at(-1)!.headers["anthropic-beta"], mode === "override" ? "hook-beta" : undefined);
+				}
+				hookMode = "none";
+				const refreshed = JSON.parse(await readFile(modelsPath, "utf8"));
+				for (const beta of ["refreshed-beta", undefined]) {
+					const model = refreshed.providers.claude.models[0];
+					if (beta) model.headers["anthropic-beta"] = beta;
+					else delete model.headers["anthropic-beta"];
+					await writeFile(modelsPath, JSON.stringify(refreshed));
+					await runtime.refresh({ allowNetwork: false });
+					await session.setModel(runtime.getModel("claude", claude.models[0]!.id)!);
+					await session.prompt("Use refreshed beta configuration");
+					assert.equal(session.getLastAssistantText(), "ok");
+					if (beta) assert.equal(captured.at(-1)!.headers["anthropic-beta"], beta);
+					else assert.match(String(captured.at(-1)!.headers["anthropic-beta"]), /mid-conversation-output-config-2026-07-01.*claude-code-20250219/);
+				}
 				const uncached = await runtime.streamSimple(runtime.getModel("codex", "gpt-5.2")!, context as any, { sessionId: manager.getSessionId(), cacheRetention: "none", onPayload: (payload: any) => ({ ...payload, model: "routed-model", service_tier: "ultrafast" }) }).result();
 				assert.equal(uncached.stopReason, "stop", uncached.errorMessage);
 				assert.equal(captured.at(-1)!.headers["session-id"], manager.getSessionId());

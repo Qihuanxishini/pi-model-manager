@@ -1,10 +1,9 @@
-// Claude Code 请求头来自真实客户端捕获；Codex 采用 codex-proxy-rs 的通用 Rust CLI 画像。
+// Claude Code 身份字段来自真实客户端捕获，协议 beta 由 Pi 按请求生成；Codex 采用 codex-proxy-rs 的通用 Rust CLI 画像。
 
 export const CLAUDE_CODE_CLIENT_HEADERS: Record<string, string> = {
-	"anthropic-beta": "claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14,context-management-2025-06-27,mid-conversation-tool-changes-2026-07-01,thinking-token-count-2026-05-13,advanced-tool-use-2025-11-20,effort-2025-11-24",
 	"anthropic-dangerous-direct-browser-access": "true",
 	"anthropic-version": "2023-06-01",
-	"user-agent": "claude-cli/2.1.325 (external, sdk-cli)",
+	"user-agent": "claude-cli/2.1.326 (external, sdk-cli)",
 	"x-app": "cli",
 	"x-stainless-arch": "x64",
 	"x-stainless-lang": "js",
@@ -13,7 +12,7 @@ export const CLAUDE_CODE_CLIENT_HEADERS: Record<string, string> = {
 	"x-stainless-retry-count": "0",
 	"x-stainless-runtime": "node",
 	"x-stainless-runtime-version": "v26.12.1",
-	"x-stainless-timeout": "300",
+	"x-stainless-timeout": "600",
 };
 
 export const CODEX_CLI_CLIENT_HEADERS: Record<string, string> = {
