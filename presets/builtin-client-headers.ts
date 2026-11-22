@@ -3,7 +3,7 @@
 export const CLAUDE_CODE_CLIENT_HEADERS: Record<string, string> = {
 	"anthropic-dangerous-direct-browser-access": "true",
 	"anthropic-version": "2023-06-01",
-	"user-agent": "claude-cli/2.1.326 (external, sdk-cli)",
+	"user-agent": "claude-cli/2.1.330 (external, sdk-cli)",
 	"x-app": "cli",
 	"x-stainless-arch": "x64",
 	"x-stainless-lang": "js",
@@ -17,6 +17,6 @@ export const CLAUDE_CODE_CLIENT_HEADERS: Record<string, string> = {
 
 export const CODEX_CLI_CLIENT_HEADERS: Record<string, string> = {
 	"originator": "codex_cli_rs",
-	"user-agent": "codex_cli_rs/0.169.0 (Windows 10.0.26100; x86_64) unknown",
-	"version": "0.169.0",
+	"user-agent": "codex_cli_rs/0.171.0 (Windows 10.0.26100; x86_64) unknown",
+	"version": "0.171.0",
 };
