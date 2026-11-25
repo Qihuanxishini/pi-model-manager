@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renameModelInDoc, type ModelsJsonDocument } from "../models-json-manager.ts";
 import { buildModelFromDraft, createModelDraftFromStoredModel } from "../state-document.ts";
+import { createEmptyMetadata } from "../state-metadata-store.ts";
+import { buildStateDocumentFromModelsJson } from "../state-store.ts";
 import {
 	buildModelsDocumentWithSynchronizedModel,
 	buildModelsDocumentWithoutModel,
@@ -124,6 +126,33 @@ test("Model 重命名保留自定义 thinkingLevelMap", () => {
 		xhigh: null,
 		max: "max",
 	});
+});
+
+test("Google 模型读取、编辑和保存保留显式 thinkingLevelMap，仅补缺项", async () => {
+	const source: ModelsJsonDocument = {
+		providers: {
+			managed: {
+				api: "google-generative-ai",
+				baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+				models: [{ ...createModel("edited"), reasoning: true, thinkingLevelMap: { minimal: null, high: "medium", xhigh: "xhigh" } }],
+			},
+		},
+	};
+	const metadata = createEmptyMetadata();
+	metadata.managedProviderIds = ["managed"];
+	const expected = { minimal: null, low: "low", medium: "medium", high: "medium", xhigh: "xhigh", max: null };
+	const state = await buildStateDocumentFromModelsJson(source, metadata);
+	const provider = state.providers.managed!;
+	const existing = provider.models[0]!;
+	assert.deepEqual(existing.thinkingLevelMap, expected);
+
+	const draft = createModelDraftFromStoredModel("managed", provider, existing);
+	draft.modelName = "Edited";
+	provider.models[0] = buildModelFromDraft(existing, draft, provider.compat);
+	const saved = buildModelsDocumentWithSynchronizedModel(state, source, "managed", "edited");
+	assert.deepEqual(saved.providers.managed!.models![0]!.thinkingLevelMap, expected);
+	const reloaded = await buildStateDocumentFromModelsJson(JSON.parse(JSON.stringify(saved)), metadata);
+	assert.deepEqual(reloaded.providers.managed!.models[0]!.thinkingLevelMap, expected);
 });
 
 test("Model 删除只删除目标节点，最后一个 Model 删除时才移除 Provider", () => {

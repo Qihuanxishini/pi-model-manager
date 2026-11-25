@@ -16,7 +16,7 @@ const OPENAI_THINKING_LEVEL_MAP: ThinkingLevelMap = {
 	max: "max",
 };
 
-// [喵喵喵]: Gemini 原生 ThinkingLevel 只有 MINIMAL/LOW/MEDIUM/HIGH；pi 的 xhigh/max 必须显式禁用。(2026-07-10)
+// Google 的 xhigh/max 默认关闭，具体模型可通过显式映射启用。
 const GOOGLE_GENERATIVE_AI_THINKING_LEVEL_MAP: ThinkingLevelMap = {
 	minimal: "minimal",
 	low: "low",
@@ -42,17 +42,6 @@ function buildThinkingLevelMap(api: ApiKind, reasoning: boolean): ThinkingLevelM
 	return { ...EXTENDED_THINKING_LEVEL_MAP };
 }
 
-function applyProtocolThinkingLevelLimits(
-	api: ApiKind,
-	thinkingLevelMap: ThinkingLevelMap | undefined,
-): ThinkingLevelMap | undefined {
-	if (api === "google-generative-ai") {
-		return { ...(thinkingLevelMap ?? {}), ...GOOGLE_GENERATIVE_AI_THINKING_LEVEL_MAP };
-	}
-	if (!thinkingLevelMap) return undefined;
-	return { ...EXTENDED_THINKING_LEVEL_MAP, ...thinkingLevelMap };
-}
-
 function mergeThinkingLevelMap(
 	defaultMap: ThinkingLevelMap | undefined,
 	storedMap: ThinkingLevelMap | undefined,
@@ -69,5 +58,5 @@ export function normalizeThinkingLevelMap(
 	if (!reasoning) return undefined;
 	const defaultMap = buildThinkingLevelMap(api, true);
 	if (storedMap && isLegacyShiftedMaxLadder(storedMap)) return defaultMap;
-	return applyProtocolThinkingLevelLimits(api, mergeThinkingLevelMap(defaultMap, storedMap));
+	return mergeThinkingLevelMap(defaultMap, storedMap);
 }
