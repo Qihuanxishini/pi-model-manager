@@ -155,6 +155,33 @@ test("Google 模型读取、编辑和保存保留显式 thinkingLevelMap，仅�
 	assert.deepEqual(reloaded.providers.managed!.models[0]!.thinkingLevelMap, expected);
 });
 
+test("Google 等级制模型的新默认开放全档位，预算制及已存显式限制保持不变", async () => {
+	const { normalizeThinkingLevelMap } = await import("../presets/thinking.ts");
+	const budgetMap = { minimal: "minimal", low: "low", medium: "medium", high: "high", xhigh: null, max: null };
+	const levelMap = { ...budgetMap, xhigh: "xhigh", max: "max" };
+	for (const id of ["gemini-3-pro-preview", "gemini-3.1-flash", "gemini-4-neon", "vendor/gemini-5-next", "gemini-flash-latest", "gemma-4-model"]) {
+		assert.deepEqual(normalizeThinkingLevelMap("google-generative-ai", true, undefined, id), levelMap, id);
+		assert.deepEqual(normalizeThinkingLevelMap("google-generative-ai", true, budgetMap, id), budgetMap, "不自动迁移存量限制");
+	}
+	for (const id of ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "custom-model"]) {
+		assert.deepEqual(normalizeThinkingLevelMap("google-generative-ai", true, undefined, id), budgetMap, id);
+	}
+	const source: ModelsJsonDocument = { providers: { managed: {
+		api: "google-generative-ai", baseUrl: "https://gateway.invalid/v1beta",
+		models: [{ ...createModel("gemini-4-neon"), reasoning: true }],
+	} } };
+	const metadata = createEmptyMetadata();
+	metadata.managedProviderIds = ["managed"];
+	const state = await buildStateDocumentFromModelsJson(source, metadata);
+	const provider = state.providers.managed!;
+	const draft = createModelDraftFromStoredModel("managed", provider, provider.models[0]!);
+	provider.models[0] = buildModelFromDraft(provider.models[0], draft, provider.compat);
+	const saved = buildModelsDocumentWithSynchronizedModel(state, source, "managed", draft.modelId);
+	assert.deepEqual(saved.providers.managed!.models![0]!.thinkingLevelMap, levelMap);
+	const reloaded = await buildStateDocumentFromModelsJson(saved, metadata);
+	assert.deepEqual(reloaded.providers.managed!.models[0]!.thinkingLevelMap, levelMap);
+});
+
 test("Model 删除只删除目标节点，最后一个 Model 删除时才移除 Provider", () => {
 	const source = createSource();
 	const stateWithProvider = createState(createProvider([createModel("untouched")]));

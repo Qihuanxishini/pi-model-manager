@@ -1,9 +1,11 @@
 // 在 Pi 已构造请求后选择传输路线；协议判断始终使用真实网关地址。
 
 import { lazyStream, type Provider } from "@earendil-works/pi-ai";
+import { isObjectRecord } from "./common.ts";
 import { getClaudeCodeSessionId } from "./claude-code-compat.ts";
 import { applyCodexRequestHeaders } from "./codex-compat.ts";
 import { mergeModelRequestHeaders, resolveClientHeaderProfile } from "./presets/client-headers.ts";
+import { usesGoogleThinkingLevel } from "./presets/thinking.ts";
 import { t } from "./i18n.ts";
 import { getProviderHttpProxyUrl, openTemporaryLocalProxyRoute } from "./local-proxy-service.ts";
 import { appendUrlPath, resolveRuntimeBaseUrl, validateRequestBaseUrl } from "./runtime-base-url.ts";
@@ -101,15 +103,51 @@ export function createProviderTransport(native: Provider, provider: StoredProvid
 	}));
 	const proxyUrl = provider.httpProxyEnabled ? getProviderHttpProxyUrl(provider) : undefined;
 
-	const wrap = (stream: Provider["streamSimple"]): Provider["streamSimple"] => (model, context, options) => lazyStream(model, async () => {
+	const wrap = (stream: Provider["streamSimple"], simple: boolean): Provider["streamSimple"] => (model, context, options) => lazyStream(model, async () => {
 		const endpoint = endpoints.get(model.id);
 		if (!endpoint || endpoint.api !== model.api) throw new Error(t("请求模型不属于当前接入配置：{modelId}", { modelId: model.id }));
 		validateRequestBaseUrl(endpoint.baseUrl);
 		// [喵喵喵]: models.json 已保存完整模型头，由宿主在 transformHeaders 前解析；发送层不能再次合并配置而复活被删除的头。
 		options = { ...options };
 		// [喵喵喵]: models.json 会叠加在动态 provider 之上；还原用户侧 API 根地址，不能让原生持久化形式参与路径拼接。
-		const upstreamModel = { ...model, baseUrl: endpoint.baseUrl };
+		let upstreamModel = { ...model, baseUrl: endpoint.baseUrl };
 		if (model.api === "google-generative-ai") {
+			if (simple && model.reasoning && options.reasoning && usesGoogleThinkingLevel(model.id)
+				&& model.thinkingLevelMap?.[options.reasoning] !== null) {
+				const level = options.reasoning;
+				const mappedLevel = model.thinkingLevelMap?.[level] ?? level;
+				const originalOptions = options;
+				const restoreModel = (requestModel: typeof model) => ({
+					...requestModel,
+					reasoning: model.reasoning,
+					samplingParamsByThinkingLevel: model.samplingParamsByThinkingLevel,
+				});
+				const { reasoning: _reasoning, ...nativeOptions } = options;
+				// [喵喵喵]: 禁用原生档位转换而非借用低档位；通用限额仍由 streamSimple 计算，采样参数按真实选择预先合并。
+				upstreamModel = { ...upstreamModel, reasoning: false, samplingParamsByThinkingLevel: undefined };
+				options = {
+					...nativeOptions,
+					samplingParams: {
+						...model.samplingParams,
+						...model.samplingParamsByThinkingLevel?.[level],
+						...options.samplingParams,
+					},
+					async onPayload(payload, requestModel) {
+						if (!isObjectRecord(payload) || !isObjectRecord(payload.config)) {
+							throw new Error("Google request payload is missing its config object");
+						}
+						payload.config.thinkingConfig = { includeThoughts: true, thinkingLevel: mappedLevel.toUpperCase() };
+						// [喵喵喵]: 先提供最终档位，再调用原有钩子；钩子的替换、修改和拒绝都保留。
+						return originalOptions.onPayload?.(payload, restoreModel(requestModel));
+					},
+					onResponse: originalOptions.onResponse
+						? (response, requestModel) => originalOptions.onResponse!(response, restoreModel(requestModel))
+						: undefined,
+					onProviderStreamEvent: originalOptions.onProviderStreamEvent
+						? (event, requestModel) => originalOptions.onProviderStreamEvent!(event, restoreModel(requestModel))
+						: undefined,
+				};
+			}
 			// [喵喵喵]: Google 适配器先按精确键拼入默认 User-Agent，再构造 Headers；使用该拼写才能覆盖而不是合并成两个值。
 			if (options.headers?.["user-agent"] !== undefined) {
 				const { "user-agent": userAgent, ...headers } = options.headers;
@@ -203,7 +241,7 @@ export function createProviderTransport(native: Provider, provider: StoredProvid
 
 	return {
 		...native,
-		stream: wrap(native.stream.bind(native)) as Provider["stream"],
-		streamSimple: wrap(native.streamSimple.bind(native)),
+		stream: wrap(native.stream.bind(native), false) as Provider["stream"],
+		streamSimple: wrap(native.streamSimple.bind(native), true),
 	};
 }

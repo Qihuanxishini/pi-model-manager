@@ -164,7 +164,7 @@ function buildStoredModelFromModelsJson(
 	if (nativeHeaders) stored.headers = nativeHeaders;
 	if (model.name) stored.name = model.name;
 	const storedThinkingLevelMap = model.thinkingLevelMap ? cloneJson(model.thinkingLevelMap) as ThinkingLevelMap : undefined;
-	const thinkingLevelMap = normalizeThinkingLevelMap(effectiveApi, stored.reasoning, storedThinkingLevelMap);
+	const thinkingLevelMap = normalizeThinkingLevelMap(effectiveApi, stored.reasoning, storedThinkingLevelMap, stored.id);
 	if (thinkingLevelMap) stored.thinkingLevelMap = thinkingLevelMap;
 	if (modelCompat) stored.compat = modelCompat;
 	if (effectiveApi === "openai-responses" && modelMetadata?.openAIServiceTier) {

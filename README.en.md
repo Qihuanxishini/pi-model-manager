@@ -132,6 +132,7 @@ Ctrl+S 保存并启用模型；不切换当前会话模型
 - Fetch model IDs from compatible upstream APIs or enter them manually.
 - Configure context window, maximum output, vision support, and reasoning support.
 - Choose Anthropic Adaptive Thinking or Legacy Thinking.
+- New level-based Gemini models expose `minimal / low / medium / high / xhigh / max` by default and send the matching uppercase value; support is determined by the upstream service. Budget-based Gemini models retain native levels and token budgets. Existing explicit level mappings and disabled levels are not automatically rewritten.
 - Select Standard, Fast (`priority`), or Ultrafast (`ultrafast`) service tiers per OpenAI Responses model.
 - Route each provider directly or through its own HTTP(S) proxy.
 - Use recommended, disabled, Claude Code, Codex, or custom client-header profiles.

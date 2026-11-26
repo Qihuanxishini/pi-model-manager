@@ -446,6 +446,116 @@ test("真实 Pi：四协议代理前后端点、业务头、payload 和 SSE 结�
 	}
 });
 
+test("真实 Pi：Google 全档位同名出站、钩子及原生预算协议保持有效", { skip: !realRuntime, timeout: 20_000 }, async () => {
+	const { getSupportedThinkingLevels } = await import("@earendil-works/pi-ai");
+	const { normalizeThinkingLevelMap } = await import("../presets/thinking.ts");
+	const captured: any[] = [];
+	let responseStatus = 200;
+	const server = createServer(async (req, res) => {
+		let body = "";
+		for await (const chunk of req) body += chunk;
+		captured.push(JSON.parse(body));
+		if (responseStatus !== 200) {
+			res.writeHead(responseStatus, { "content-type": "application/json" });
+			res.end(JSON.stringify({ error: { code: responseStatus, message: "unsupported fixture level", status: "INVALID_ARGUMENT" } }));
+			return;
+		}
+		res.writeHead(200, { "content-type": "text/event-stream" });
+		res.end(sse("google-generative-ai"));
+	});
+	server.listen(0, "127.0.0.1");
+	await once(server, "listening");
+	const localUrl = `http://127.0.0.1:${(server.address() as any).port}`;
+	const id = "google-thinking-wire";
+	let pi: any;
+	try {
+		const config = provider("google-generative-ai", `${localUrl}/v1beta`);
+		config.models[0]!.id = "gemini-4-neon";
+		config.models[0]!.contextWindow = 8192;
+		config.models[0]!.thinkingLevelMap = normalizeThinkingLevelMap(config.api, true, undefined, config.models[0]!.id);
+		const modelsPath = await writeStateFixture({ version: 2, providers: { [id]: config }, managedProviderIds: [id], requestHeaderProfiles: {}, clientHeaderCaptures: {} });
+		const runtime = await ModelRuntime.create({ credentials: emptyCredentials, modelsPath, refreshOnCreate: false, allowModelNetwork: false });
+		pi = { registerProvider: (native: any) => runtime.registerNativeProvider(native), unregisterProvider: (id: string) => runtime.unregisterProvider(id) };
+		const levels = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
+		for (const httpProxyEnabled of [false, true]) {
+			await reconcileProvider(pi, id, { ...config, httpProxyEnabled, httpProxyUrl: localUrl });
+			const model = runtime.getModel(id, config.models[0]!.id)!;
+			assert.deepEqual(getSupportedThinkingLevels(model), ["off", ...levels]);
+			const off = await runtime.streamSimple(model, context as any).result();
+			assert.equal(off.stopReason, "stop", off.errorMessage);
+			assert.deepEqual(captured.at(-1).generationConfig.thinkingConfig, { thinkingBudget: 0 });
+			const nativeCap = captured.at(-1).generationConfig.maxOutputTokens;
+			assert.ok(nativeCap > 0 && nativeCap < model.maxTokens, "原生上下文余量收紧输出上限");
+			for (const reasoning of levels) {
+				let payloadCalls = 0;
+				let responses = 0;
+				let streamEvents = 0;
+				const result = await runtime.streamSimple(model, context as any, {
+					reasoning,
+					onPayload(payload: any, requestModel) {
+						payloadCalls++;
+						assert.equal(requestModel.reasoning, true);
+						assert.equal(payload.config.thinkingConfig.thinkingLevel, reasoning.toUpperCase());
+						return { ...payload, config: { ...payload.config, temperature: 0.42 } };
+					},
+					onResponse(_response, requestModel) {
+						responses++;
+						assert.equal(requestModel.reasoning, true);
+					},
+					onProviderStreamEvent(_event, requestModel) {
+						streamEvents++;
+						assert.equal(requestModel.reasoning, true);
+					},
+				}).result();
+				assert.equal(result.stopReason, "stop", `${reasoning}, proxy=${httpProxyEnabled}: ${result.errorMessage}`);
+				assert.equal(payloadCalls, 1);
+				assert.equal(responses, 0, "Google 原生成功流不触发 onResponse");
+				assert.equal(streamEvents, 1);
+				assert.deepEqual(captured.at(-1).generationConfig.thinkingConfig, { includeThoughts: true, thinkingLevel: reasoning.toUpperCase() });
+				assert.equal(captured.at(-1).generationConfig.maxOutputTokens, nativeCap);
+				assert.equal(captured.at(-1).generationConfig.temperature, 0.42);
+			}
+			const restricted = { ...model, thinkingLevelMap: { off: null, minimal: null, low: null, medium: null, high: null, xhigh: null, max: "max" } };
+			const maxOnly = await runtime.streamSimple(restricted, context as any, { reasoning: "max" }).result();
+			assert.equal(maxOnly.stopReason, "stop", maxOnly.errorMessage);
+			assert.equal(captured.at(-1).generationConfig.thinkingConfig.thinkingLevel, "MAX");
+			const hookOverride = await runtime.streamSimple(model, context as any, {
+				reasoning: "max", onPayload(payload: any) { payload.config.thinkingConfig = { thinkingLevel: "HOOK_LEVEL" }; },
+			}).result();
+			assert.equal(hookOverride.stopReason, "stop", hookOverride.errorMessage);
+			assert.deepEqual(captured.at(-1).generationConfig.thinkingConfig, { thinkingLevel: "HOOK_LEVEL" });
+			responseStatus = 400;
+			let failedResponses = 0;
+			const rejected = await runtime.streamSimple(model, context as any, {
+				reasoning: "max", maxRetries: 0,
+				onResponse(response, requestModel) {
+					failedResponses++;
+					assert.equal(response.status, 400);
+					assert.equal(requestModel.reasoning, true);
+				},
+			}).result();
+			assert.equal(rejected.stopReason, "error");
+			assert.match(rejected.errorMessage!, /unsupported fixture level/);
+			assert.equal(failedResponses, 1);
+			responseStatus = 200;
+		}
+		unregisterManagedProvider(pi, id);
+		config.models[0]!.id = "gemini-2.5-flash";
+		config.models[0]!.thinkingLevelMap = normalizeThinkingLevelMap(config.api, true, undefined, config.models[0]!.id);
+		await reconcileProvider(pi, id, config);
+		const budgetModel = runtime.getModel(id, config.models[0]!.id)!;
+		assert.deepEqual(getSupportedThinkingLevels(budgetModel), ["off", "minimal", "low", "medium", "high"]);
+		const budget = await runtime.streamSimple(budgetModel, context as any, { reasoning: "high", thinkingBudgets: { high: 4096 } }).result();
+		assert.equal(budget.stopReason, "stop", budget.errorMessage);
+		assert.deepEqual(captured.at(-1).generationConfig.thinkingConfig, { includeThoughts: true, thinkingBudget: 4096 });
+	} finally {
+		if (pi) unregisterManagedProvider(pi, id);
+		await closeLocalProxyServer();
+		server.closeAllConnections();
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+	}
+});
+
 test("真实 Pi：Gemini 草稿地址转换后经保存重载，发现与聊天使用同一版本路径", { skip: !realRuntime, timeout: 15_000 }, async () => {
 	const { resolveProviderDraftBaseUrl } = await import("../runtime-base-url.ts");
 	const { createProviderDraftFromStored } = await import("../state-document.ts");

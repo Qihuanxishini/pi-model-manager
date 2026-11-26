@@ -132,6 +132,7 @@ Ctrl+S 保存并启用模型；不切换当前会话模型
 - 从兼容上游拉取模型 ID，也可手动填写模型。
 - 配置上下文窗口、最大输出、视觉支持和 Thinking。
 - 支持 Anthropic Adaptive Thinking 与 Legacy Thinking。
+- 等级制 Gemini 的新模型默认开放 `minimal / low / medium / high / xhigh / max`，按同名值发送（按协议转为大写），是否支持由上游判断；预算制 Gemini 保留原生档位与 token 预算规则。已有显式档位映射和禁用配置不会自动重写。
 - 为 OpenAI Responses 模型选择标准、Fast（`priority`）或 Ultrafast（`ultrafast`）速度档位。
 - 为每个接入单独配置直连或 HTTP(S) 代理。
 - 提供自动推荐、禁用、Claude Code、Codex 和自定义请求头模式。

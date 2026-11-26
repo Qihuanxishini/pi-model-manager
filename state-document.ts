@@ -348,6 +348,7 @@ function keepModelFieldsSupportedByApi(model: StoredModel, providerApi: ApiKind,
 		effectiveApi,
 		next.reasoning,
 		providerApiChanged && !normalized.api ? undefined : next.thinkingLevelMap,
+		next.id,
 	);
 	if (thinkingLevelMap) next.thinkingLevelMap = thinkingLevelMap;
 	else delete next.thinkingLevelMap;
@@ -427,7 +428,7 @@ export function buildModelFromDraft(
 	const compat: CompatSettings = cloneJson(existing?.compat) ?? {};
 	const effectiveApi = isApiKind(existing?.api) ? existing.api : draft.api;
 	const storedThinkingLevelMap = cloneJson(existing?.thinkingLevelMap);
-	const thinkingLevelMap = normalizeThinkingLevelMap(effectiveApi, reasoning, storedThinkingLevelMap);
+	const thinkingLevelMap = normalizeThinkingLevelMap(effectiveApi, reasoning, storedThinkingLevelMap, modelId);
 
 	const next: StoredModel = {
 		id: modelId,

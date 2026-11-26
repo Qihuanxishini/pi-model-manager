@@ -16,8 +16,8 @@ const OPENAI_THINKING_LEVEL_MAP: ThinkingLevelMap = {
 	max: "max",
 };
 
-// Google 的 xhigh/max 默认关闭，具体模型可通过显式映射启用。
-const GOOGLE_GENERATIVE_AI_THINKING_LEVEL_MAP: ThinkingLevelMap = {
+// 预算制模型保留原生档位与 token 预算规则。
+const GOOGLE_BUDGET_THINKING_LEVEL_MAP: ThinkingLevelMap = {
 	minimal: "minimal",
 	low: "low",
 	medium: "medium",
@@ -25,6 +25,17 @@ const GOOGLE_GENERATIVE_AI_THINKING_LEVEL_MAP: ThinkingLevelMap = {
 	xhigh: null,
 	max: null,
 };
+
+export function usesGoogleThinkingLevel(modelId: string): boolean {
+	const id = modelId.toLowerCase();
+	const major = Number(id.match(/gemini(?:-live)?-(\d+)/)?.[1] ?? 0);
+	// [喵喵喵]: 与 Pi 的 Google wire-format 分类一致；只区分等级制/预算制，不判断各模型支持哪些档位。
+	return /gemini-3(?:\.\d+)?-(?:pro|flash)/.test(id)
+		|| major >= 4
+		|| id === "gemini-flash-latest"
+		|| id === "gemini-flash-lite-latest"
+		|| /gemma-?4/.test(id);
+}
 
 function isLegacyShiftedMaxLadder(map: ThinkingLevelMap): boolean {
 	return map.minimal === "low"
@@ -35,9 +46,14 @@ function isLegacyShiftedMaxLadder(map: ThinkingLevelMap): boolean {
 		&& map.max === undefined;
 }
 
-function buildThinkingLevelMap(api: ApiKind, reasoning: boolean): ThinkingLevelMap | undefined {
+function buildThinkingLevelMap(api: ApiKind, reasoning: boolean, modelId: string): ThinkingLevelMap | undefined {
 	if (!reasoning) return undefined;
-	if (api === "google-generative-ai") return { ...GOOGLE_GENERATIVE_AI_THINKING_LEVEL_MAP };
+	if (api === "google-generative-ai") {
+		return {
+			...GOOGLE_BUDGET_THINKING_LEVEL_MAP,
+			...(usesGoogleThinkingLevel(modelId) ? EXTENDED_THINKING_LEVEL_MAP : {}),
+		};
+	}
 	if (api === "openai-completions" || api === "openai-responses") return { ...OPENAI_THINKING_LEVEL_MAP };
 	return { ...EXTENDED_THINKING_LEVEL_MAP };
 }
@@ -54,9 +70,10 @@ export function normalizeThinkingLevelMap(
 	api: ApiKind,
 	reasoning: boolean,
 	storedMap: ThinkingLevelMap | undefined,
+	modelId: string,
 ): ThinkingLevelMap | undefined {
 	if (!reasoning) return undefined;
-	const defaultMap = buildThinkingLevelMap(api, true);
+	const defaultMap = buildThinkingLevelMap(api, true, modelId);
 	if (storedMap && isLegacyShiftedMaxLadder(storedMap)) return defaultMap;
 	return mergeThinkingLevelMap(defaultMap, storedMap);
 }
