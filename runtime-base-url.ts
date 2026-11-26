@@ -39,6 +39,17 @@ export function resolveRuntimeBaseUrl(api: ApiKind, baseUrl: string): string {
 	return formatUrl(url);
 }
 
+/** 仅用于主动编辑地址或切换协议；运行时和启动迁移必须保留显式版本路径。 */
+export function resolveProviderDraftBaseUrl(api: ApiKind, baseUrl: string, previousApi?: ApiKind): string {
+	const url = new URL(resolveRuntimeBaseUrl(api, baseUrl));
+	if (api === "google-generative-ai") {
+		url.pathname = url.pathname === "/" ? "/v1beta" : url.pathname.replace(/\/v1$/, "/v1beta");
+	} else if (previousApi === "google-generative-ai") {
+		url.pathname = url.pathname.replace(/\/v1beta$/, "/v1");
+	}
+	return formatUrl(url);
+}
+
 /** 标准 Anthropic 根地址存成 SDK 原生形式，自定义版本路径由私有元数据标识。 */
 export function toNativeBaseUrl(api: string, baseUrl: string): { baseUrl: string; anthropicApiRoot?: true } {
 	if (api !== "anthropic-messages") return { baseUrl };

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { findPresetForApi, switchProviderDraftApiPreset } from "../presets/providers.ts";
-import { appendUrlPath, resolveRuntimeBaseUrl, toNativeBaseUrl, validateRequestBaseUrl } from "../runtime-base-url.ts";
+import { appendUrlPath, resolveProviderDraftBaseUrl, resolveRuntimeBaseUrl, toNativeBaseUrl, validateRequestBaseUrl } from "../runtime-base-url.ts";
 import type { ProviderDraft } from "../types.ts";
 
 function createDraft(): ProviderDraft {
@@ -30,13 +30,13 @@ test("协议切换仅替换旧协议默认预设", () => {
 	assert.equal(draft.apiKey, "$ANTHROPIC_API_KEY");
 });
 
-test("协议切换保留明文 key、自定义引用、命令和自定义 URL", () => {
+test("协议切换保留认证与自定义 URL 前缀，并转换 Gemini 版本后缀", () => {
 	for (const apiKey of ["sk-plaintext", "$MY_PRIVATE_KEY", "!secret-tool read provider"]) {
 		const draft = createDraft();
 		draft.baseUrl = "https://gateway.example.com/tenant-a/openai/v1?region=cn";
 		draft.apiKey = apiKey;
 		switchProviderDraftApiPreset(draft, "google-generative-ai");
-		assert.equal(draft.baseUrl, "https://gateway.example.com/tenant-a/openai/v1?region=cn");
+		assert.equal(draft.baseUrl, "https://gateway.example.com/tenant-a/openai/v1beta?region=cn");
 		assert.equal(draft.apiKey, apiKey);
 	}
 });
@@ -46,6 +46,32 @@ test("旧预设 URL 的尾斜杠不阻止安全替换", () => {
 	draft.baseUrl = "https://api.openai.com/v1/";
 	switchProviderDraftApiPreset(draft, "anthropic-messages");
 	assert.equal(draft.baseUrl, "https://api.anthropic.com/v1");
+});
+
+test("Gemini 草稿转换仅匹配末尾版本段，反向转换限于从 Gemini 切出", () => {
+	const cases: [string, string][] = [
+		["https://gateway.example.com", "https://gateway.example.com/v1beta"],
+		["https://generativelanguage.googleapis.com/v1/", "https://generativelanguage.googleapis.com/v1beta"],
+		[" https://v1.example.com:8443/v1/tenant/v1/ ", "https://v1.example.com:8443/v1/tenant/v1beta"],
+		["https://gateway.example.com/tenant/v1beta/", "https://gateway.example.com/tenant/v1beta"],
+		...["custom", "v1alpha", "v2", "xv1", "v1/models"].map((path): [string, string] => [
+			`https://gateway.example.com/${path}`, `https://gateway.example.com/${path}`,
+		]),
+	];
+	for (const [input, expected] of cases) {
+		assert.equal(resolveProviderDraftBaseUrl("google-generative-ai", input), expected);
+	}
+	for (const api of ["openai-completions", "openai-responses", "anthropic-messages"] as const) {
+		const url = "https://gateway.example.com/tenant/v1beta";
+		assert.equal(resolveProviderDraftBaseUrl(api, url), url, "手动输入其他协议地址不反向改写");
+		const draft = createDraft();
+		draft.api = "google-generative-ai";
+		draft.baseUrl = `${url}/`;
+		switchProviderDraftApiPreset(draft, api);
+		assert.equal(draft.baseUrl, "https://gateway.example.com/tenant/v1");
+	}
+	assert.equal(resolveRuntimeBaseUrl("google-generative-ai", "https://gateway.example.com/v1"), "https://gateway.example.com/v1");
+	assert.equal(resolveRuntimeBaseUrl("google-generative-ai", "https://gateway.example.com"), "https://gateway.example.com");
 });
 
 test("地址工具保留 query，发送边界显式拒绝 Base URL 查询参数", () => {

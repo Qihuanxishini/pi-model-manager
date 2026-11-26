@@ -1,7 +1,7 @@
 // 4 种 API 协议的默认预设。新建接入/模型时用，便于一键填好常用字段。
 
 import type { ApiKind, ModelInputKind, ProviderDraft } from "../types.ts";
-import { resolveRuntimeBaseUrl } from "../runtime-base-url.ts";
+import { resolveProviderDraftBaseUrl } from "../runtime-base-url.ts";
 
 export interface ProviderPreset {
 	api: ApiKind;
@@ -103,10 +103,9 @@ export function switchProviderDraftApiPreset(draft: ProviderDraft, nextApi: ApiK
 	if (nextApi === "openai-completions" && draft.openAIChatCompatibilityMode === undefined) {
 		draft.openAIChatCompatibilityMode = "standard";
 	}
-	// [喵喵喵]: 版本路径规则随协议而变（OpenAI 要 /v1、Anthropic 不要），
-	// 保留的自定义地址必须按新协议重新归一化，否则切完协议就指向错误端点。
+	// [喵喵喵]: 自定义地址只在草稿阶段按目标协议转换版本后缀，避免运行时改写存量配置。
 	try {
-		draft.baseUrl = replaceBaseUrl ? nextPreset.baseUrl : resolveRuntimeBaseUrl(nextApi, draft.baseUrl);
+		draft.baseUrl = replaceBaseUrl ? nextPreset.baseUrl : resolveProviderDraftBaseUrl(nextApi, draft.baseUrl, previousPreset.api);
 	} catch {
 		draft.baseUrl = nextPreset.baseUrl;
 	}

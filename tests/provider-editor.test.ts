@@ -68,6 +68,48 @@ test("Chat 接入的协议兼容支持左右键两态切换并显示说明", asy
 	assert.deepEqual(await outcome, { action: "save", draft });
 });
 
+test("Gemini 地址编辑立即回显版本转换，非法输入保留草稿并提示", { timeout: 5000 }, async () => {
+	const realTui = process.env.PI_MODEL_MANAGER_REAL_RUNTIME === "1";
+	const keys = realTui ? { down: "\x1b[B", enter: "\r", save: "\x13" } : { down: Key.down, enter: Key.enter, save: Key.ctrl("s") };
+	const draft = { ...createChatDraft(), api: "google-generative-ai" as const };
+	const originalUrl = draft.baseUrl;
+	const expectedUrl = "https://gateway.example.test/tenant/v1beta";
+	const inputs = ["https://[invalid", " https://gateway.example.test/tenant/v1/ "];
+	const warnings: string[] = [];
+	let menus = 0;
+	const ctx = {
+		ui: {
+			input: async () => inputs.shift(),
+			notify: (message: string, level: string) => { assert.equal(level, "warning"); warnings.push(message); },
+			custom(factory: any) {
+				return new Promise((resolve, reject) => {
+					try {
+						const menu: MenuComponent = factory({ requestRender() {} }, {
+							fg: (_color: string, text: string) => text,
+							bg: (_color: string, text: string) => text,
+							bold: (text: string) => text,
+						}, {}, resolve);
+						menus++;
+						if (menus <= 2) {
+							assert.equal(draft.baseUrl, originalUrl, "打开编辑器或输入错误不改写存量地址");
+							if (menus === 1) for (let i = 0; i < 3; i++) menu.handleInput(keys.down);
+							menu.handleInput(keys.enter);
+						} else {
+							assert.equal(draft.baseUrl, expectedUrl);
+							assert.ok(menu.render(120).join("\n").includes(expectedUrl));
+							menu.handleInput(keys.save);
+						}
+					} catch (error) { reject(error); }
+				});
+			},
+		},
+	} as any;
+	assert.deepEqual(await editProvider(ctx, draft, "编辑接入"), { action: "save", draft });
+	assert.equal(menus, 3);
+	assert.equal(warnings.length, 1);
+	assert.match(warnings[0]!, /Base URL 格式错误/);
+});
+
 function createResponsesDraft(): ProviderDraft {
 	return {
 		...createChatDraft(),

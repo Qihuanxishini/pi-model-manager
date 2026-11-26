@@ -446,6 +446,67 @@ test("真实 Pi：四协议代理前后端点、业务头、payload 和 SSE 结�
 	}
 });
 
+test("真实 Pi：Gemini 草稿地址转换后经保存重载，发现与聊天使用同一版本路径", { skip: !realRuntime, timeout: 15_000 }, async () => {
+	const { resolveProviderDraftBaseUrl } = await import("../runtime-base-url.ts");
+	const { createProviderDraftFromStored } = await import("../state-document.ts");
+	const { saveProviderConfiguration } = await import("../model-mutations.ts");
+	const { readState } = await import("../state-store.ts");
+	const { fetchModelIds } = await import("../tui/model-list-fetch.ts");
+	const paths: string[] = [];
+	const server = createServer(async (req, res) => {
+		for await (const _ of req) {}
+		paths.push(new URL(req.url!, localUrl).pathname);
+		if (req.method === "GET") {
+			res.writeHead(200, { "content-type": "application/json" });
+			res.end(JSON.stringify({ models: [{ name: "models/gemini-2.5-flash" }] }));
+		} else {
+			res.writeHead(200, { "content-type": "text/event-stream" });
+			res.end(sse("google-generative-ai"));
+		}
+	});
+	server.listen(0, "127.0.0.1");
+	await once(server, "listening");
+	const localUrl = `http://127.0.0.1:${(server.address() as any).port}`;
+	const id = "gemini-draft-wire";
+	try {
+		const config = provider("google-generative-ai", `${localUrl}/tenant/v1`);
+		const state: StateDocument = { version: 2, providers: { [id]: config }, managedProviderIds: [id], requestHeaderProfiles: {}, clientHeaderCaptures: {} };
+		const modelsPath = await writeStateFixture(state);
+		const runtime = await ModelRuntime.create({ credentials: emptyCredentials, modelsPath, allowModelNetwork: false });
+		const pi = { registerProvider: (native: any) => runtime.registerNativeProvider(native), unregisterProvider: (id: string) => runtime.unregisterProvider(id) } as any;
+		const draft = createProviderDraftFromStored(id, config);
+		draft.baseUrl = resolveProviderDraftBaseUrl(draft.api, `${config.baseUrl}/`);
+		const expectedRoot = `${localUrl}/tenant/v1beta`;
+		assert.equal(draft.baseUrl, expectedRoot);
+		await saveProviderConfiguration(pi, { modelRegistry: runtime, ui: { notify() {} } } as any, state, draft, id);
+		assert.equal(JSON.parse(await readFile(modelsPath, "utf8")).providers[id].baseUrl, expectedRoot);
+		unregisterManagedProvider(pi, id);
+
+		const stored = (await readState()).providers[id]!;
+		assert.equal(stored.baseUrl, expectedRoot);
+		const reloaded = await ModelRuntime.create({ credentials: emptyCredentials, modelsPath, allowModelNetwork: false });
+		const reloadedPi = { registerProvider: (native: any) => reloaded.registerNativeProvider(native), unregisterProvider: (id: string) => reloaded.unregisterProvider(id) } as any;
+		try {
+			for (const httpProxyEnabled of [false, true]) {
+				await reconcileProvider(reloadedPi, id, { ...stored, httpProxyEnabled, httpProxyUrl: localUrl });
+				const discovery = await fetchModelIds({ ...draft, baseUrl: stored.baseUrl, httpProxyEnabled, httpProxyUrl: localUrl });
+				assert.deepEqual(discovery, { status: "loaded", modelIds: ["gemini-2.5-flash"] });
+				const model = reloaded.getModel(id, config.models[0]!.id)!;
+				assert.ok(model);
+				const result = await reloaded.streamSimple(model, context as any).result();
+				assert.equal(result.stopReason, "stop", result.errorMessage);
+				assert.deepEqual(paths.slice(-2), ["/tenant/v1beta/models", "/tenant/v1beta/models/gemini-2.5-flash:streamGenerateContent"]);
+			}
+		} finally {
+			unregisterManagedProvider(reloadedPi, id);
+		}
+	} finally {
+		await closeLocalProxyServer();
+		server.closeAllConnections();
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+	}
+});
+
 test("真实 Pi：标准 Anthropic 原生可用，加载插件后独立端点和混合协议仍按 API 根地址发送", { skip: !realRuntime, timeout: 15_000 }, async () => {
 	const config = provider("anthropic-messages", "http://gateway.invalid/tenant/v1");
 	config.models.push({ ...config.models[0]!, id: "custom-root", baseUrl: "http://gateway.invalid/xxx" });

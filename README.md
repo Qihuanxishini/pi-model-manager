@@ -207,7 +207,9 @@ pi install npm:pi-model-manager
 
 新建模型时，扩展会尝试从上游读取模型列表；整次发现共用一个 10 秒上限，可按 `Esc` 手动取消。列表与聊天使用同一 API 根地址和配置的认证信息，错误会区分认证失败、接口不存在、限流和上游异常。失败或取消后仍可手动输入模型 ID。
 
-Base URL 表示 API 根地址：OpenAI 两种协议和 Anthropic 只填域名时补 `/v1`，显式填写路径时保留该路径，再追加协议端点。例如 Anthropic 的 `https://gw.example.com/xxx` 请求 `/xxx/messages`，模型列表请求 `/xxx/models`。Google 在官方根地址上补 `/v1beta`，自定义路径保持原样。Base URL 不支持查询参数（`?`）、片段（`#`）或内嵌认证；SDK 正常生成的请求参数不受影响。
+Base URL 表示 API 根地址，再追加协议端点。例如 Anthropic 的 `https://gw.example.com/xxx` 请求 `/xxx/messages`，模型列表请求 `/xxx/models`。在接入编辑器中输入地址或切换协议时，只填域名会按协议补 `/v1`（OpenAI / Anthropic）或 `/v1beta`（Gemini，包括自定义中转域名）。Gemini 会将末尾完整路径段 `/v1` 转为 `/v1beta`；从 Gemini 切回 OpenAI / Anthropic 时，末尾 `/v1beta` 转为 `/v1`。域名、端口和路径前缀保留，其他显式路径（如 `/custom`、`/v1alpha`、`/v2`）不改写。
+
+转换后的地址会立即显示在表单中，保存后统一用于聊天和模型列表。此版本转换只发生在上述配置操作中，不自动迁移未编辑的存量地址，也不改写模型级独立地址或未接管的原生接入。Base URL 不支持查询参数（`?`）、片段（`#`）或内嵌认证；SDK 正常生成的请求参数不受影响。
 
 Anthropic 标准端点在写入 `models.json` 时转换为 Pi 原生 SDK 所需形式，因此未加载扩展时也能使用；自定义版本路径通过 `state.json` 私有标记衔接，依赖扩展的发送适配。代理开关只改变传输路线，最终端点、业务请求头和 payload 保持一致；代理失败会报错。
 

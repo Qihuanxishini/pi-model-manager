@@ -8,7 +8,7 @@ import { hasStringRecordEntries } from "../common.ts";
 import { t } from "../i18n.ts";
 import { switchProviderDraftApiPreset } from "../presets/providers.ts";
 import { redactUrlForDisplay } from "../sensitive-redaction.ts";
-import { resolveRuntimeBaseUrl, validateRequestBaseUrl } from "../runtime-base-url.ts";
+import { resolveProviderDraftBaseUrl, validateRequestBaseUrl } from "../runtime-base-url.ts";
 import {
 	DEFAULT_PROVIDER_HTTP_PROXY_URL,
 	type OpenAIChatCompatibilityMode,
@@ -296,7 +296,7 @@ async function editField(
 	// [喵喵喵]: 当场校验并归一化成 SDK 可直接使用的根地址；若输入有误通过通知友好提示，避免未捕获异常导致 TUI 闪退丢失草稿
 	try {
 		validateRequestBaseUrl(trimmed);
-		draft.baseUrl = resolveRuntimeBaseUrl(draft.api, trimmed);
+		draft.baseUrl = resolveProviderDraftBaseUrl(draft.api, trimmed);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		ctx.ui.notify(t("Base URL 格式错误：{error}", { error: message }), "warning");
